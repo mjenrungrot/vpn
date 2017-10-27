@@ -29,6 +29,8 @@
 int debug;
 char *progname;
 
+struct sockaddr_in peerAddr;
+
 /**************************************************************************
  * tun_alloc: allocates or reconnects to a tun/tap device. The caller     *
  *            needs to reserve enough space in *dev.                      *
@@ -241,7 +243,8 @@ int main(int argc, char *argv[]){
 
   do_debug("Successfully connected to interface %s\n", if_name);
 
-  if ( (sock_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+  // Use SOCK_DGRAM for UDP connections
+  if ( (sock_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
     perror("socket()");
     exit(1);
   }
@@ -256,8 +259,9 @@ int main(int argc, char *argv[]){
     remote.sin_port = htons(port);
 
     /* connection request */
-    if (connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
-      perror("connect()");
+    char *hello = "hello";
+    if (sendto(sock_fd, hello, strlen(hello), 0, (struct sockaddr*) &remote, sizeof(remote)) < 0){
+      perror("sendto()");
       exit(1);
     }
 
@@ -282,16 +286,11 @@ int main(int argc, char *argv[]){
       exit(1);
     }
     
-    if (listen(sock_fd, 5) < 0){
-      perror("listen()");
-      exit(1);
-    }
-    
     /* wait for connection request */
     remotelen = sizeof(remote);
     memset(&remote, 0, remotelen);
-    if ((net_fd = accept(sock_fd, (struct sockaddr*)&remote, &remotelen)) < 0){
-      perror("accept()");
+    if ((net_fd = recvfrom(sock_fd, buffer, BUFSIZE, 0, (struct sockaddr*)&remote, &remotelen)) < 0){
+      perror("recvfrom()");
       exit(1);
     }
 
