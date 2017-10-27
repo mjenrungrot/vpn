@@ -29,7 +29,8 @@
 int debug;
 char *progname;
 
-struct sockaddr_in peerAddr;
+struct sockaddr_in local, remote;
+socklen_t remotelen;
 
 /**************************************************************************
  * tun_alloc: allocates or reconnects to a tun/tap device. The caller     *
@@ -68,6 +69,53 @@ int tun_alloc(char *dev, int flags){
 	// Return the device name at the end.
 	strcpy(dev, ifr.ifr_name);
 	return fd;
+}
+
+/**************************************************************************
+ * cread: read routine that checks for errors and exits if an error is    *
+ *        returned.                                                       *
+ **************************************************************************/
+int cread(int fd, char *buf, int n){
+  
+  int nread;
+  if((nread=recvfrom(fd, buf, n, 0, (struct sockaddr*)&remote, &remotelen)) < 0){
+    perror("Reading data");
+    exit(1);
+  }
+  return nread;
+}
+
+/**************************************************************************
+ * cwrite: write routine that checks for errors and exits if an error is  *
+ *         returned.                                                      *
+ **************************************************************************/
+int cwrite(int fd, char *buf, int n){
+  
+  int nwrite;
+  if((nwrite=sendto(fd, buf, n, 0, (struct sockaddr *)&remote, sizeof(remote))) < 0){
+    perror("Writing data");
+    exit(1);
+  }
+  return nwrite;
+}
+
+/**************************************************************************
+ * read_n: ensures we read exactly n bytes, and puts them into "buf".     *
+ *         (unless EOF, of course)                                        *
+ **************************************************************************/
+int read_n(int fd, char *buf, int n) {
+
+  int nread, left = n;
+
+  while(left > 0) {
+    if ((nread = cread(fd, buf, left)) == 0){
+      return 0 ;      
+    }else {
+      left -= nread;
+      buf += nread;
+    }
+  }
+  return n;  
 }
 
 /**************************************************************************
@@ -122,11 +170,9 @@ int main(int argc, char *argv[]){
   uint16_t nread, nwrite, plength;
 //  uint16_t total_len, ethertype;
   char buffer[BUFSIZE];
-  struct sockaddr_in local, remote;
   char remote_ip[16] = "";
   unsigned short int port = PORT;
   int sock_fd, net_fd, optval = 1;
-  socklen_t remotelen;
   int cliserv = -1;    /* must be specified on cmd line */
   unsigned long int tap2net = 0, net2tap = 0;
 
@@ -275,12 +321,12 @@ int main(int argc, char *argv[]){
     }
 
     if(FD_ISSET(tap_fd, &rd_set)){
-		memset(buffer, 0, BUFSIZE);
-		nread = read(tap_fd, buffer, BUFSIZE);
+		//memset(buffer, 0, BUFSIZE);
+		nread = cread(tap_fd, buffer, BUFSIZE);
 		plength = htons(nread);
 		
-		nwrite = sendto(net_fd, (char *)&plength, sizeof(plength), 0, (struct sockaddr *)&remote, sizeof(remote));
-		nwrite = sendto(net_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));
+		nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));//sendto(net_fd, (char *)&plength, sizeof(plength), 0, (struct sockaddr *)&remote, sizeof(remote));
+		nwrite = cwrite(net_fd, buffer, nread);//sendto(net_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));
 		
 		tap2net++;
 		if(cliserv == CLIENT){
@@ -293,9 +339,9 @@ int main(int argc, char *argv[]){
       /* data from the network: read it, and write it to the tun/tap interface. 
        * We need to read the length first, and then the packet */
        
-        memset(buffer, 0, BUFSIZE);
-		nread = recvfrom(net_fd, buffer, BUFSIZE, 0, NULL, NULL);
-		nwrite = write(tap_fd, buffer, nread);
+        //memset(buffer, 0, BUFSIZE);
+		nread = read_n(net_fd, (char *)&plength, sizeof(plength));//recvfrom(net_fd, buffer, ntohs(plength), 0, NULL, NULL);
+		nwrite = cwrite(tap_fd, buffer, nread);
 		
 		net2tap++;
 		if(cliserv == CLIENT){
