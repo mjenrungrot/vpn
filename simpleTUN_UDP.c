@@ -289,10 +289,13 @@ int main(int argc, char *argv[]){
     /* wait for connection request */
     remotelen = sizeof(remote);
     memset(&remote, 0, remotelen);
-    if ((net_fd = recvfrom(sock_fd, buffer, BUFSIZE, 0, (struct sockaddr*)&remote, &remotelen)) < 0){
+    int len;
+    if ((len = recvfrom(sock_fd, buffer, BUFSIZE, 0, (struct sockaddr*)&remote, &remotelen)) < 0){
       perror("recvfrom()");
       exit(1);
     }
+   
+    net_fd = sock_fd;
 
     do_debug("SERVER: Client connected from %s\n", inet_ntoa(remote.sin_addr));
   }
@@ -314,6 +317,7 @@ int main(int argc, char *argv[]){
     }
 
     if (ret < 0) {
+	  printf("file descriptor = %d\n", (int)ret);
       perror("select()");
       exit(1);
     }
