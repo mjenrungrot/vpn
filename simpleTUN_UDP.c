@@ -76,9 +76,10 @@ int tun_alloc(char *dev, int flags){
  *        returned.                                                       *
  **************************************************************************/
 int cread(int fd, char *buf, int n){
-  
+  memset(buf, 0, BUFSIZE);
   int nread;
-  if((nread=recvfrom(fd, buf, n, 0, (struct sockaddr*)&remote, &remotelen)) < 0){
+  if((nread=read(fd, buf, n)) < 0){
+  //recvfrom(fd, buf, n, 0, (struct sockaddr*)&remote, &remotelen)) < 0){
     perror("Reading data");
     exit(1);
   }
@@ -92,7 +93,7 @@ int cread(int fd, char *buf, int n){
 int cwrite(int fd, char *buf, int n){
   
   int nwrite;
-  if((nwrite=sendto(fd, buf, n, 0, (struct sockaddr *)&remote, sizeof(remote))) < 0){
+  if((nwrite=write(fd, buf, n)) < 0){//, 0, (struct sockaddr *)&remote, sizeof(remote))) < 0){
     perror("Writing data");
     exit(1);
   }
@@ -108,6 +109,7 @@ int read_n(int fd, char *buf, int n) {
   int nread, left = n;
 
   while(left > 0) {
+	  printf("left = %d / n = %d\n",left, n);
     if ((nread = cread(fd, buf, left)) == 0){
       return 0 ;      
     }else {
@@ -261,7 +263,13 @@ int main(int argc, char *argv[]){
       perror("sendto()");
       exit(1);
     }
-
+    
+    /* Provide a destination for UDP connections */
+	if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
+		perror("connect()");
+		exit(1);
+	}
+	
     net_fd = sock_fd;
     do_debug("CLIENT: Connected to server %s\n", inet_ntoa(remote.sin_addr));
     
@@ -291,14 +299,17 @@ int main(int argc, char *argv[]){
       perror("recvfrom()");
       exit(1);
     }
-   
+    
+    if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
+		perror("connect()");
+		exit(1);
+	}
     net_fd = sock_fd;
 
     do_debug("SERVER: Client connected from %s\n", inet_ntoa(remote.sin_addr));
   }
-  
-  /* use select() to handle two descriptors at once */
-  maxfd = (tap_fd > net_fd)?tap_fd:net_fd;
+  //printf("Tap file descriptor = %d\n",(int)tap_fd);
+  //printf("Net file descriptor = %d\n",(int)net_fd);
 
   while(1) {
     int ret;
@@ -307,8 +318,7 @@ int main(int argc, char *argv[]){
     FD_ZERO(&rd_set);
     FD_SET(tap_fd, &rd_set); 
     FD_SET(net_fd, &rd_set);
-
-    ret = select(maxfd + 1, &rd_set, NULL, NULL, NULL);
+    ret = select(FD_SETSIZE, &rd_set, NULL, NULL, NULL);
 
     if (ret < 0 && errno == EINTR){
       continue;
@@ -321,12 +331,11 @@ int main(int argc, char *argv[]){
     }
 
     if(FD_ISSET(tap_fd, &rd_set)){
-		//memset(buffer, 0, BUFSIZE);
-		nread = recvfrom(tap_fd, buffer, BUFSIZE, 0, NULL, NULL);//cread(tap_fd, buffer, BUFSIZE);
+		nread = cread(tap_fd, buffer, BUFSIZE);
 		plength = htons(nread);
 		
-		nwrite = sendto(net_fd, (char *)&plength, sizeof(plength), 0, (struct sockaddr *)&remote, sizeof(remote));
-		nwrite = sendto(net_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));
+		nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));
+		nwrite = cwrite(net_fd, buffer, nread);
 		
 		tap2net++;
 		if(cliserv == CLIENT){
@@ -338,11 +347,11 @@ int main(int argc, char *argv[]){
     if(FD_ISSET(net_fd, &rd_set)){
       /* data from the network: read it, and write it to the tun/tap interface. 
        * We need to read the length first, and then the packet */
-       
-        //memset(buffer, 0, BUFSIZE);
-		nread = recvfrom(net_fd, buffer, ntohs(plength), 0, NULL, NULL);
-		nread = recvfrom(net_fd, buffer, nread, 0, NULL, NULL);  //ad_n(net_fd, buffer, nread);
-		nwrite = sendto(tap_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));//cwrite(tap_fd, buffer, nread);
+        
+		nread = read_n(net_fd, (char *)&plength, sizeof(plength));//, 0, NULL, NULL);
+        nread = read_n(net_fd, buffer, ntohs(plength));  //ad_n(net_fd, buffer, nread);
+		
+		nwrite = cwrite(tap_fd, buffer, nread);
 		
 		net2tap++;
 		if(cliserv == CLIENT){
