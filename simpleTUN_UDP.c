@@ -322,11 +322,11 @@ int main(int argc, char *argv[]){
 
     if(FD_ISSET(tap_fd, &rd_set)){
 		//memset(buffer, 0, BUFSIZE);
-		nread = cread(tap_fd, buffer, BUFSIZE);
+		nread = recvfrom(tap_fd, buffer, BUFSIZE, 0, NULL, NULL);//cread(tap_fd, buffer, BUFSIZE);
 		plength = htons(nread);
 		
-		nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));//sendto(net_fd, (char *)&plength, sizeof(plength), 0, (struct sockaddr *)&remote, sizeof(remote));
-		nwrite = cwrite(net_fd, buffer, nread);//sendto(net_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));
+		nwrite = sendto(net_fd, (char *)&plength, sizeof(plength), 0, (struct sockaddr *)&remote, sizeof(remote));
+		nwrite = sendto(net_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));
 		
 		tap2net++;
 		if(cliserv == CLIENT){
@@ -340,8 +340,9 @@ int main(int argc, char *argv[]){
        * We need to read the length first, and then the packet */
        
         //memset(buffer, 0, BUFSIZE);
-		nread = read_n(net_fd, (char *)&plength, sizeof(plength));//recvfrom(net_fd, buffer, ntohs(plength), 0, NULL, NULL);
-		nwrite = cwrite(tap_fd, buffer, nread);
+		nread = recvfrom(net_fd, buffer, ntohs(plength), 0, NULL, NULL);
+		nread = recvfrom(net_fd, buffer, nread, 0, NULL, NULL);  //ad_n(net_fd, buffer, nread);
+		nwrite = sendto(tap_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));//cwrite(tap_fd, buffer, nread);
 		
 		net2tap++;
 		if(cliserv == CLIENT){
