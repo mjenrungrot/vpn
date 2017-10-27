@@ -277,27 +277,31 @@ int main(int argc, char *argv[]){
     if(FD_ISSET(tap_fd, &rd_set)){
 		memset(buffer, 0, BUFSIZE);
 		nread = read(tap_fd, buffer, BUFSIZE);
+		plength = htons(nread);
+		
+		nwrite = sendto(net_fd, (char *)&plength, sizeof(plength), 0, (struct sockaddr *)&remote, sizeof(remote));
+		nwrite = sendto(net_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));
+		
+		tap2net++;
 		if(cliserv == CLIENT){
-			do_debug("This is sending from TUN [CLIENT] to tunnel\n");
-			sendto(net_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));
+			do_debug("TAP2NET %lu: This is sending from TUN [CLIENT] to tunnel Read [%d] Write [%d]\n", tap2net, nread, nwrite);
 		}else{
-			do_debug("This is sending from TUN [SERVER] to tunnel\n");
-			sendto(net_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));
+			do_debug("TAP2NET %lu: This is sending from TUN [SERVER] to tunnel Read [%d] Write [%d]\n", tap2net, nread, nwrite);
 		}
 	}
     if(FD_ISSET(net_fd, &rd_set)){
       /* data from the network: read it, and write it to the tun/tap interface. 
        * We need to read the length first, and then the packet */
+       
+        memset(buffer, 0, BUFSIZE);
+		nread = recvfrom(net_fd, buffer, BUFSIZE, 0, NULL, NULL);
+		nwrite = write(tap_fd, buffer, nread);
+		
+		net2tap++;
 		if(cliserv == CLIENT){
-			do_debug("Received packets from TUNNEL to [CLIENT]\n");
-			memset(buffer, 0, BUFSIZE);
-			nread = recvfrom(net_fd, buffer, BUFSIZE, 0, NULL, NULL);
-			write(tap_fd, buffer, nread);
+			do_debug("NET2TAP %lu: Received packets from TUNNEL to [CLIENT] Read [%d] Write [%d]\n", net2tap, nread, nwrite);
 		}else{
-			do_debug("Received packets from TUNNEL to [SERVER]\n");
-			memset(buffer, 0, BUFSIZE);
-			nread = recvfrom(net_fd, buffer, BUFSIZE, 0, NULL, NULL);
-			write(tap_fd, buffer, nread);
+			do_debug("NET2TAP %lu: Received packets from TUNNEL to [SERVER] Read [%d] Write [%d]\n", net2tap, nread, nwrite);
 		}
     }
   }
