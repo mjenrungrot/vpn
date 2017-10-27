@@ -71,55 +71,6 @@ int tun_alloc(char *dev, int flags){
 }
 
 /**************************************************************************
- * cread: read routine that checks for errors and exits if an error is    *
- *        returned.                                                       *
- **************************************************************************/
-int cread(int fd, char *buf, int n){
-  
-  int nread;
-
-  if((nread=read(fd, buf, n))<0){
-    perror("Reading data");
-    exit(1);
-  }
-  return nread;
-}
-
-/**************************************************************************
- * cwrite: write routine that checks for errors and exits if an error is  *
- *         returned.                                                      *
- **************************************************************************/
-int cwrite(int fd, char *buf, int n){
-  
-  int nwrite;
-
-  if((nwrite=write(fd, buf, n))<0){
-    perror("Writing data");
-    exit(1);
-  }
-  return nwrite;
-}
-
-/**************************************************************************
- * read_n: ensures we read exactly n bytes, and puts those into "buf".    *
- *         (unless EOF, of course)                                        *
- **************************************************************************/
-int read_n(int fd, char *buf, int n) {
-
-  int nread, left = n;
-
-  while(left > 0) {
-    if ((nread = cread(fd, buf, left))==0){
-      return 0 ;      
-    }else {
-      left -= nread;
-      buf += nread;
-    }
-  }
-  return n;  
-}
-
-/**************************************************************************
  * do_debug: prints debugging stuff (doh!)                                *
  **************************************************************************/
 void do_debug(char *msg, ...){
@@ -308,7 +259,8 @@ int main(int argc, char *argv[]){
     fd_set rd_set;
 
     FD_ZERO(&rd_set);
-    FD_SET(tap_fd, &rd_set); FD_SET(net_fd, &rd_set);
+    FD_SET(tap_fd, &rd_set); 
+    FD_SET(net_fd, &rd_set);
 
     ret = select(maxfd + 1, &rd_set, NULL, NULL, NULL);
 
@@ -323,41 +275,30 @@ int main(int argc, char *argv[]){
     }
 
     if(FD_ISSET(tap_fd, &rd_set)){
-      /* data from tun/tap: just read it and write it to the network */
-      
-      nread = cread(tap_fd, buffer, BUFSIZE);
-
-      tap2net++;
-      do_debug("TAP2NET %lu: Read %d bytes from the tap interface\n", tap2net, nread);
-
-      /* write length + packet */
-      plength = htons(nread);
-      nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));
-      nwrite = cwrite(net_fd, buffer, nread);
-      
-      do_debug("TAP2NET %lu: Written %d bytes to the network\n", tap2net, nwrite);
-    }
-
+		memset(buffer, 0, BUFSIZE);
+		nread = read(tap_fd, buffer, BUFSIZE);
+		if(cliserv == CLIENT){
+			do_debug("This is sending from TUN [CLIENT] to tunnel\n");
+			sendto(net_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));
+		}else{
+			do_debug("This is sending from TUN [SERVER] to tunnel\n");
+			sendto(net_fd, buffer, nread, 0, (struct sockaddr *)&remote, sizeof(remote));
+		}
+	}
     if(FD_ISSET(net_fd, &rd_set)){
       /* data from the network: read it, and write it to the tun/tap interface. 
        * We need to read the length first, and then the packet */
-
-      /* Read length */      
-      nread = read_n(net_fd, (char *)&plength, sizeof(plength));
-      if(nread == 0) {
-        /* ctrl-c at the other end */
-        break;
-      }
-
-      net2tap++;
-
-      /* read packet */
-      nread = read_n(net_fd, buffer, ntohs(plength));
-      do_debug("NET2TAP %lu: Read %d bytes from the network\n", net2tap, nread);
-
-      /* now buffer[] contains a full packet or frame, write it into the tun/tap interface */ 
-      nwrite = cwrite(tap_fd, buffer, nread);
-      do_debug("NET2TAP %lu: Written %d bytes to the tap interface\n", net2tap, nwrite);
+		if(cliserv == CLIENT){
+			do_debug("Received packets from TUNNEL to [CLIENT]\n");
+			memset(buffer, 0, BUFSIZE);
+			nread = recvfrom(net_fd, buffer, BUFSIZE, 0, NULL, NULL);
+			write(tap_fd, buffer, nread);
+		}else{
+			do_debug("Received packets from TUNNEL to [SERVER]\n");
+			memset(buffer, 0, BUFSIZE);
+			nread = recvfrom(net_fd, buffer, BUFSIZE, 0, NULL, NULL);
+			write(tap_fd, buffer, nread);
+		}
     }
   }
   
