@@ -51,6 +51,22 @@ unsigned int salt[] = {12345, 54321};
 unsigned char *key_data = "key";
 int key_data_len = 3;
 
+unsigned char* copyBytes(unsigned char *sourceStr, unsigned char *destinationStr, int len){
+	int i;
+	for(i=0;i < len;i++){
+		destinationStr[i] = sourceStr[i];
+	}
+}
+
+unsigned char* printHex(unsigned char *string, int len){
+	unsigned char *output = malloc(2*len+1);
+	int i;
+	for(i=0;i < len;i++){
+		sprintf(output + (i*2), "%02x", string[i]);
+	} 
+	return output;
+}
+
 /**************************************************************************
  * sha256hash: Make a SHA-256 hash of the given string                    *
  **************************************************************************/
@@ -96,11 +112,8 @@ unsigned char *aes_encrypt(EVP_CIPHER_CTX *e, unsigned char *plaintext, int *len
 	int c_len = *len + AES_BLOCK_SIZE, f_len = 0;
 	unsigned char *ciphertext = malloc(c_len);
 	EVP_EncryptInit_ex(e, NULL, NULL, NULL, NULL);
-
 	EVP_EncryptUpdate(e, ciphertext, &c_len, plaintext, *len);
-
 	EVP_EncryptFinal_ex(e, ciphertext+c_len, &f_len);
-
 	*len = c_len + f_len;
 	return ciphertext;
 }
@@ -116,7 +129,6 @@ unsigned char *aes_decrypt(EVP_CIPHER_CTX *e, unsigned char *ciphertext, int *le
 	EVP_DecryptInit_ex(e, NULL, NULL, NULL, NULL);
 	EVP_DecryptUpdate(e, plaintext, &p_len, ciphertext, *len);
 	EVP_DecryptFinal_ex(e, plaintext+p_len, &f_len);
-
 	*len = p_len + f_len;
 	return plaintext;
 }
@@ -170,7 +182,6 @@ int cread(int fd, char *buf, int n){
   memset(buf, 0, BUFSIZE);
   int nread;
   if((nread=read(fd, buf, n)) < 0){
-  //recvfrom(fd, buf, n, 0, (struct sockaddr*)&remote, &remotelen)) < 0){
     perror("Reading data");
     exit(1);
   }
@@ -184,7 +195,7 @@ int cread(int fd, char *buf, int n){
 int cwrite(int fd, char *buf, int n){
   
   int nwrite;
-  if((nwrite=write(fd, buf, n)) < 0){//, 0, (struct sockaddr *)&remote, sizeof(remote))) < 0){
+  if((nwrite=write(fd, buf, n)) < 0){
     perror("Writing data");
     exit(1);
   }
@@ -200,7 +211,7 @@ int read_n(int fd, char *buf, int n) {
   int nread, left = n;
 
   while(left > 0) {
-	  printf("left = %d / n = %d\n",left, n);
+	//  printf("left = %d / n = %d\n",left, n);
     if ((nread = cread(fd, buf, left)) == 0){
       return 0 ;      
     }else {
@@ -425,16 +436,23 @@ int main(int argc, char *argv[]){
     if(FD_ISSET(tap_fd, &rd_set)){
 		nread = cread(tap_fd, buffer, BUFSIZE);
 		plength = htons(nread);
+		do_debug("\t%s", printHex(buffer, nread));
 		
 		unsigned char *input;
-		int len = sizeof(plength) + nread;
+		int len = nread;
 		input = malloc(len);
-		strncpy(input, (char *)&plength, sizeof(plength));
-		strncat(input, buffer, nread);
+		copyBytes(buffer, input, nread);
+		do_debug("\t%s", printHex(input, nread));
 		
 		unsigned char *ciphertext;
 	    ciphertext = aes_encrypt(&en, input, &len);
-		
+		do_debug("\tinput = %s, ciphertext = %s[%d]\n", printHex(input, nread), printHex(ciphertext, len), len);
+	
+		// fix the length of the header
+		plength = htons(len);
+		//printf("len = %d\n", len);
+		//printf("header size = %s\n", printHex((char *)&plength, 2));
+		//printf("header size = %s\n", printHex((char *)&plength, 2));
 		nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));
 		nwrite = cwrite(net_fd, ciphertext, len);
 		
@@ -450,10 +468,14 @@ int main(int argc, char *argv[]){
        * We need to read the length first, and then the packet */
         
 		nread = read_n(net_fd, (char *)&plength, sizeof(plength));
-        nread = read_n(net_fd, buffer, ntohs(plength));  
-        
+		
 		int len = ntohs(plength);
+        nread = read_n(net_fd, buffer, len);  
+        
+		do_debug("\tciphertext = %s[%d]\n", printHex(buffer, len), len);
 		char *decryptedText = (char *)aes_decrypt(&de, buffer, &len);
+		
+		do_debug("\tdecryptedText = %s[%d]\n", printHex(decryptedText, len), len);
 		nwrite = cwrite(tap_fd, decryptedText, len);
 		
 		net2tap++;
