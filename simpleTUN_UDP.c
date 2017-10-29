@@ -15,6 +15,16 @@
 #include <errno.h>
 #include <stdarg.h>
 
+/* OpenSSL for AES-256 algorithm */
+#include <openssl/evp.h>
+#include <openssl/aes.h>
+
+/* OpenSSL for SHA-256 algorithm */
+#include <openssl/sha.h>
+
+/* OpenSSL for HMAC algorithm */
+#include <openssl/hmac.h>
+
 /* buffer for reading from tun/tap interface, must be >= 1500 */
 #define BUFSIZE 2000   
 #define CLIENT 0
@@ -31,6 +41,87 @@ char *progname;
 
 struct sockaddr_in local, remote;
 socklen_t remotelen;
+
+
+
+/****** Encryption + Decryption + Hash *********************/
+
+EVP_CIPHER_CTX en, de;
+unsigned int salt[] = {12345, 54321};
+unsigned char *key_data = "key";
+int key_data_len = 3;
+
+/**************************************************************************
+ * sha256hash: Make a SHA-256 hash of the given string                    *
+ **************************************************************************/
+void sha256hash(char *string, char outputBuffer[65]){
+	unsigned char hash[SHA256_DIGEST_LENGTH];
+	SHA256_CTX sha256;
+	SHA256_Init(&sha256);
+	SHA256_Update(&sha256, string, strlen(string));
+	SHA256_Final(hash, &sha256);
+	int i = 0;
+	for(i = 0; i < SHA256_DIGEST_LENGTH; i++){
+		sprintf(outputBuffer + (i*2), "%02x", hash[i]);
+	}
+	outputBuffer[64] = 0;
+}
+
+/**************************************************************************
+ * aes_init: Generate random key + iv
+ * 
+ **************************************************************************/
+int aes_init(unsigned char *key_data, int key_data_len, unsigned char *salt,
+	     EVP_CIPHER_CTX *e_ctx, EVP_CIPHER_CTX *d_ctx){
+	int i, nrounds = 5;
+	unsigned char key[32], iv[32];
+
+	i = EVP_BytesToKey(EVP_aes_256_cbc(), EVP_sha1(), salt, key_data, key_data_len, nrounds, key, iv);
+	if( i != 32 ){
+		printf("Key size = %d\n", i);
+		return -1;
+	}
+
+	EVP_CIPHER_CTX_init(e_ctx);
+	EVP_EncryptInit_ex(e_ctx, EVP_aes_256_cbc(), NULL, key, iv);
+	EVP_CIPHER_CTX_init(d_ctx);
+	EVP_DecryptInit_ex(d_ctx, EVP_aes_256_cbc(), NULL, key, iv);
+}
+
+/**************************************************************************
+ * aes_encrypt
+ * 
+ **************************************************************************/
+unsigned char *aes_encrypt(EVP_CIPHER_CTX *e, unsigned char *plaintext, int *len){
+	int c_len = *len + AES_BLOCK_SIZE, f_len = 0;
+	unsigned char *ciphertext = malloc(c_len);
+	EVP_EncryptInit_ex(e, NULL, NULL, NULL, NULL);
+
+	EVP_EncryptUpdate(e, ciphertext, &c_len, plaintext, *len);
+
+	EVP_EncryptFinal_ex(e, ciphertext+c_len, &f_len);
+
+	*len = c_len + f_len;
+	return ciphertext;
+}
+
+/**************************************************************************
+ * aes_decrypt:
+ * 
+ **************************************************************************/
+unsigned char *aes_decrypt(EVP_CIPHER_CTX *e, unsigned char *ciphertext, int *len){
+	int p_len = *len, f_len = 0;
+	unsigned char *plaintext = malloc(p_len);
+
+	EVP_DecryptInit_ex(e, NULL, NULL, NULL, NULL);
+	EVP_DecryptUpdate(e, plaintext, &p_len, ciphertext, *len);
+	EVP_DecryptFinal_ex(e, plaintext+p_len, &f_len);
+
+	*len = p_len + f_len;
+	return plaintext;
+}
+
+
 
 /**************************************************************************
  * tun_alloc: allocates or reconnects to a tun/tap device. The caller     *
@@ -308,8 +399,9 @@ int main(int argc, char *argv[]){
 
     do_debug("SERVER: Client connected from %s\n", inet_ntoa(remote.sin_addr));
   }
-  //printf("Tap file descriptor = %d\n",(int)tap_fd);
-  //printf("Net file descriptor = %d\n",(int)net_fd);
+  
+  // Initialize AES
+  aes_init(key_data, key_data_len, (unsigned char*)&salt, &en, &de);
 
   while(1) {
     int ret;
@@ -334,8 +426,17 @@ int main(int argc, char *argv[]){
 		nread = cread(tap_fd, buffer, BUFSIZE);
 		plength = htons(nread);
 		
+		unsigned char *input;
+		int len = sizeof(plength) + nread;
+		input = malloc(len);
+		strncpy(input, (char *)&plength, sizeof(plength));
+		strncat(input, buffer, nread);
+		
+		unsigned char *ciphertext;
+	    ciphertext = aes_encrypt(&en, input, &len);
+		
 		nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));
-		nwrite = cwrite(net_fd, buffer, nread);
+		nwrite = cwrite(net_fd, ciphertext, len);
 		
 		tap2net++;
 		if(cliserv == CLIENT){
@@ -348,10 +449,12 @@ int main(int argc, char *argv[]){
       /* data from the network: read it, and write it to the tun/tap interface. 
        * We need to read the length first, and then the packet */
         
-		nread = read_n(net_fd, (char *)&plength, sizeof(plength));//, 0, NULL, NULL);
-        nread = read_n(net_fd, buffer, ntohs(plength));  //ad_n(net_fd, buffer, nread);
-		
-		nwrite = cwrite(tap_fd, buffer, nread);
+		nread = read_n(net_fd, (char *)&plength, sizeof(plength));
+        nread = read_n(net_fd, buffer, ntohs(plength));  
+        
+		int len = ntohs(plength);
+		char *decryptedText = (char *)aes_decrypt(&de, buffer, &len);
+		nwrite = cwrite(tap_fd, decryptedText, len);
 		
 		net2tap++;
 		if(cliserv == CLIENT){
