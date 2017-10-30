@@ -42,10 +42,9 @@ char *progname;
 struct sockaddr_in local, remote;
 socklen_t remotelen;
 
-
-
 /****** Encryption + Decryption + Hash *********************/
 
+HMAC_CTX hmac;
 EVP_CIPHER_CTX en, de;
 unsigned int salt[] = {12345, 54321};
 unsigned char *key_data = "key";
@@ -84,11 +83,12 @@ void sha256hash(char *string, char outputBuffer[65]){
 }
 
 /**************************************************************************
- * aes_init: Generate random key + iv
+ * aes_hmac_init: Generate random key + iv
  * 
  **************************************************************************/
-int aes_init(unsigned char *key_data, int key_data_len, unsigned char *salt,
-	     EVP_CIPHER_CTX *e_ctx, EVP_CIPHER_CTX *d_ctx){
+int aes_hmac_init(unsigned char *key_data, int key_data_len, unsigned char *salt,
+	              EVP_CIPHER_CTX *e_ctx, EVP_CIPHER_CTX *d_ctx,
+	              HMAC_CTX *hmac){
 	int i, nrounds = 5;
 	unsigned char key[32], iv[32];
 
@@ -98,10 +98,15 @@ int aes_init(unsigned char *key_data, int key_data_len, unsigned char *salt,
 		return -1;
 	}
 
+	// Encrypt + Decrypt 
 	EVP_CIPHER_CTX_init(e_ctx);
 	EVP_EncryptInit_ex(e_ctx, EVP_aes_256_cbc(), NULL, key, iv);
 	EVP_CIPHER_CTX_init(d_ctx);
 	EVP_DecryptInit_ex(d_ctx, EVP_aes_256_cbc(), NULL, key, iv);
+	
+	// HMAC
+	HMAC_CTX_init(hmac);
+	HMAC_Init_ex(hmac, key_data, (int)strlen(key_data), EVP_sha256(), NULL);
 }
 
 /**************************************************************************
@@ -133,6 +138,19 @@ unsigned char *aes_decrypt(EVP_CIPHER_CTX *e, unsigned char *ciphertext, int *le
 	return plaintext;
 }
 
+/****** HMAC ***********************************************/
+
+unsigned char *gen_hmac(HMAC_CTX *hmac, unsigned char *data, int *len){
+	unsigned char *result = (unsigned char*)malloc(sizeof(char) * (*len));
+	
+	HMAC_Init_ex(hmac, NULL, (int)NULL, NULL, NULL);
+	HMAC_Update(hmac, data, *len);	
+	HMAC_Final(hmac, result, len);
+	return result;
+}
+
+
+/****** VPN protocol ***************************************/
 
 
 /**************************************************************************
@@ -412,7 +430,7 @@ int main(int argc, char *argv[]){
   }
   
   // Initialize AES
-  aes_init(key_data, key_data_len, (unsigned char*)&salt, &en, &de);
+  aes_hmac_init(key_data, key_data_len, (unsigned char*)&salt, &en, &de, &hmac);
 
   while(1) {
     int ret;
@@ -436,18 +454,16 @@ int main(int argc, char *argv[]){
     if(FD_ISSET(tap_fd, &rd_set)){
 		nread = cread(tap_fd, buffer, BUFSIZE);
 		plength = htons(nread);
-		do_debug("\t%s", printHex(buffer, nread));
 		
 		unsigned char *input;
 		int len = nread;
 		input = malloc(len);
 		copyBytes(buffer, input, nread);
-		do_debug("\t%s", printHex(input, nread));
 		
 		unsigned char *ciphertext;
 	    ciphertext = aes_encrypt(&en, input, &len);
-		do_debug("\tinput = %s, ciphertext = %s[%d]\n", printHex(input, nread), printHex(ciphertext, len), len);
-	
+		do_debug("\tinput = %s [%d]\n", printHex(input, nread), nread );
+		do_debug("\tciphertext = %s[%d]\n",printHex(ciphertext, len), len);
 		// fix the length of the header
 		plength = htons(len);
 		//printf("len = %d\n", len);
@@ -455,6 +471,16 @@ int main(int argc, char *argv[]){
 		//printf("header size = %s\n", printHex((char *)&plength, 2));
 		nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));
 		nwrite = cwrite(net_fd, ciphertext, len);
+		
+		len = 84;
+		do_debug("\tinput = %s [%d]\n", printHex(input, 84), 84);
+		do_debug("\tHMAC = %s [%d]\n", printHex(hmac_result, len), len);
+		nwrite = cwrite(net_fd, hmac_result, len);
+		
+		int tmp_len = 84;
+		hmac_result = gen_hmac(&hmac, input, &tmp_len);
+		do_debug("\tinput = %s [%d]\n", printHex(input, 84), 84);
+		do_debug("\tHMAC = %s [%d]\n", printHex(hmac_result, tmp_len), tmp_len);
 		
 		tap2net++;
 		if(cliserv == CLIENT){
@@ -474,9 +500,22 @@ int main(int argc, char *argv[]){
         
 		do_debug("\tciphertext = %s[%d]\n", printHex(buffer, len), len);
 		char *decryptedText = (char *)aes_decrypt(&de, buffer, &len);
-		
 		do_debug("\tdecryptedText = %s[%d]\n", printHex(decryptedText, len), len);
+		
+		read_n(net_fd, buffer, 32);
+		unsigned char *obtained_hmac = buffer;
+		do_debug("\thmac           = %s\n", printHex(buffer, 32));
+		
+		unsigned char *generated_hmac;
+		generated_hmac = gen_hmac(&hmac, decryptedText, &len);
+		do_debug("\tgenerated HMAC = %s [%d]\n", printHex(generated_hmac, len), len);
+		
 		nwrite = cwrite(tap_fd, decryptedText, len);
+		
+		if(check_hmac(obtained_hmac, generated_hmac, 32)){
+			perror("HMAC checking failed");
+			exit(0);
+		}
 		
 		net2tap++;
 		if(cliserv == CLIENT){
