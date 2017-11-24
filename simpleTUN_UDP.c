@@ -25,6 +25,12 @@
 /* OpenSSL for HMAC algorithm */
 #include <openssl/hmac.h>
 
+/* OpenSSL for Certificates */
+#include <openssl/applink.c>
+#include <openssl/bio.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
 /* buffer for reading from tun/tap interface, must be >= 1500 */
 #define BUFSIZE 2000   
 #define CLIENT 0
@@ -155,6 +161,31 @@ int check_hmac(unsigned char *hmacA, unsigned char *hmacB, unsigned int nBytes){
 		if(hmacA[idx] != hmacB[idx]) return 0;
 	}
 	return 1;
+	
+/***********************************************************
+ * Initialize SSL                                          *
+ ***********************************************************/
+void InitializeSSL() {
+  SSL_load_error_strings();
+  SSL_library_init();
+  OpenSSL_add_all_algorithms();
+}
+
+/***********************************************************
+ * Destroy SSL                                             *
+ ***********************************************************/
+void DestroySSL() {
+  ERR_free_strings();
+  EVP_cleanup();
+}
+
+
+/***********************************************************
+ * Shutdown SSL                                            *
+ ***********************************************************/
+void ShutdownSSL() {
+  SSL_shutdown(ssl);
+  SSL_free(ssl);
 }
 
 /****** VPN protocol ***************************************/
