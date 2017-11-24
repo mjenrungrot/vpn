@@ -149,6 +149,13 @@ unsigned char *gen_hmac(HMAC_CTX *hmac, unsigned char *data, int *len){
 	return result;
 }
 
+int check_hmac(unsigned char *hmacA, unsigned char *hmacB, unsigned int nBytes){
+	int idx;
+	for(idx=0;idx<nBytes;idx++){
+		if(hmacA[idx] != hmacB[idx]) return 0;
+	}
+	return 1;
+}
 
 /****** VPN protocol ***************************************/
 
@@ -473,12 +480,13 @@ int main(int argc, char *argv[]){
 		nwrite = cwrite(net_fd, ciphertext, len);
 		
 		len = 84;
+		int tmp_len = 84;
+		unsigned char* hmac_result = gen_hmac(&hmac, input, &tmp_len);
 		do_debug("\tinput = %s [%d]\n", printHex(input, 84), 84);
 		do_debug("\tHMAC = %s [%d]\n", printHex(hmac_result, len), len);
 		nwrite = cwrite(net_fd, hmac_result, len);
 		
-		int tmp_len = 84;
-		hmac_result = gen_hmac(&hmac, input, &tmp_len);
+		tmp_len = 84;
 		do_debug("\tinput = %s [%d]\n", printHex(input, 84), 84);
 		do_debug("\tHMAC = %s [%d]\n", printHex(hmac_result, tmp_len), tmp_len);
 		
