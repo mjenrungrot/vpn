@@ -1,0 +1,2 @@
+V	181124135239Z		1000	unknown	/C=US/ST=California/L=Claremont/O=Harvey Mudd College/OU=Computer Science/CN=VPN Server/emailAddress=mjenrungrot@hmc.edu, famendola@hmc.edu
+V	181124135258Z		1001	unknown	/C=US/ST=California/L=Claremont/O=Harvey Mudd College/OU=Computer Science/CN=Client VPN/emailAddress=mjenrungrot@hmc.edu, famendola@hmc.edu

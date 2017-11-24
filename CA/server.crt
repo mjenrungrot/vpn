@@ -1,0 +1,64 @@
+Certificate:
+    Data:
+        Version: 3 (0x2)
+        Serial Number: 4096 (0x1000)
+    Signature Algorithm: sha1WithRSAEncryption
+        Issuer: C=US, ST=California, L=Claremont, O=Harvey Mudd College, CN=Teerapat Jenrungrot, Fabio Amendola/emailAddress=mjenrungrot@hmc.edu, famendola@hmc.edu
+        Validity
+            Not Before: Nov 24 13:52:39 2017 GMT
+            Not After : Nov 24 13:52:39 2018 GMT
+        Subject: C=US, ST=California, L=Claremont, O=Harvey Mudd College, OU=Computer Science, CN=VPN Server/emailAddress=mjenrungrot@hmc.edu, famendola@hmc.edu
+        Subject Public Key Info:
+            Public Key Algorithm: rsaEncryption
+                Public-Key: (1024 bit)
+                Modulus:
+                    00:b3:4b:b2:fc:eb:c5:c6:60:a5:d3:f2:aa:95:0d:
+                    25:70:1d:86:c8:17:ac:70:41:44:69:b1:80:31:d9:
+                    b1:b6:b9:79:1e:dc:3f:40:ad:b8:e0:68:9d:6f:ee:
+                    2c:e1:0d:30:3f:8c:68:9e:2a:35:66:9c:a7:fc:e1:
+                    1f:47:4b:30:7d:8a:d2:b4:06:f1:69:fb:ec:bd:84:
+                    fc:a0:6f:26:d6:a3:64:04:25:60:31:89:06:c0:df:
+                    91:ac:e1:7f:31:64:ca:6b:b0:9d:cb:e5:a1:08:d4:
+                    29:52:57:c5:8e:dd:9d:d4:12:e6:51:a7:43:a9:24:
+                    d5:9c:ca:47:f4:99:4b:9d:63
+                Exponent: 65537 (0x10001)
+        X509v3 extensions:
+            X509v3 Basic Constraints: 
+                CA:FALSE
+            Netscape Comment: 
+                OpenSSL Generated Certificate
+            X509v3 Subject Key Identifier: 
+                88:59:AD:BD:41:3C:C6:16:BE:EC:84:10:FA:E4:17:FE:78:E0:7F:52
+            X509v3 Authority Key Identifier: 
+                keyid:CF:CD:9E:AF:D3:A0:B9:B4:B7:37:95:65:5E:42:05:98:D0:B8:40:FB
+
+    Signature Algorithm: sha1WithRSAEncryption
+         b4:e6:2b:18:45:c2:be:f8:28:93:9e:0e:47:ca:09:46:82:9e:
+         16:96:2c:41:e2:1e:fb:c3:e0:b0:06:7e:48:03:1f:0b:0e:4b:
+         4a:8d:06:32:7a:64:d2:ba:15:10:c5:e0:41:9d:0c:54:6b:b9:
+         81:89:4a:03:f1:74:77:cd:7b:01:b1:91:56:4a:ae:8a:f4:61:
+         f9:86:09:86:db:db:25:4a:86:84:36:02:e3:75:63:81:54:61:
+         5b:4e:97:1d:b1:93:2c:54:6b:9d:34:45:54:01:bb:60:51:42:
+         23:2e:da:a3:a2:e8:17:3b:e4:1b:c3:fe:a9:7d:d7:13:d9:ee:
+         32:bc
+-----BEGIN CERTIFICATE-----
+MIIDaDCCAtGgAwIBAgICEAAwDQYJKoZIhvcNAQEFBQAwgbkxCzAJBgNVBAYTAlVT
+MRMwEQYDVQQIDApDYWxpZm9ybmlhMRIwEAYDVQQHDAlDbGFyZW1vbnQxHDAaBgNV
+BAoME0hhcnZleSBNdWRkIENvbGxlZ2UxLDAqBgNVBAMMI1RlZXJhcGF0IEplbnJ1
+bmdyb3QsIEZhYmlvIEFtZW5kb2xhMTUwMwYJKoZIhvcNAQkBFiZtamVucnVuZ3Jv
+dEBobWMuZWR1LCBmYW1lbmRvbGFAaG1jLmVkdTAeFw0xNzExMjQxMzUyMzlaFw0x
+ODExMjQxMzUyMzlaMIG7MQswCQYDVQQGEwJVUzETMBEGA1UECAwKQ2FsaWZvcm5p
+YTESMBAGA1UEBwwJQ2xhcmVtb250MRwwGgYDVQQKDBNIYXJ2ZXkgTXVkZCBDb2xs
+ZWdlMRkwFwYDVQQLDBBDb21wdXRlciBTY2llbmNlMRMwEQYDVQQDDApWUE4gU2Vy
+dmVyMTUwMwYJKoZIhvcNAQkBFiZtamVucnVuZ3JvdEBobWMuZWR1LCBmYW1lbmRv
+bGFAaG1jLmVkdTCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEAs0uy/OvFxmCl
+0/KqlQ0lcB2GyBescEFEabGAMdmxtrl5Htw/QK244Gidb+4s4Q0wP4xonio1Zpyn
+/OEfR0swfYrStAbxafvsvYT8oG8m1qNkBCVgMYkGwN+RrOF/MWTKa7Cdy+WhCNQp
+UlfFjt2d1BLmUadDqSTVnMpH9JlLnWMCAwEAAaN7MHkwCQYDVR0TBAIwADAsBglg
+hkgBhvhCAQ0EHxYdT3BlblNTTCBHZW5lcmF0ZWQgQ2VydGlmaWNhdGUwHQYDVR0O
+BBYEFIhZrb1BPMYWvuyEEPrkF/544H9SMB8GA1UdIwQYMBaAFM/Nnq/ToLm0tzeV
+ZV5CBZjQuED7MA0GCSqGSIb3DQEBBQUAA4GBALTmKxhFwr74KJOeDkfKCUaCnhaW
+LEHiHvvD4LAGfkgDHwsOS0qNBjJ6ZNK6FRDF4EGdDFRruYGJSgPxdHfNewGxkVZK
+ror0YfmGCYbb2yVKhoQ2AuN1Y4FUYVtOlx2xkyxUa500RVQBu2BRQiMu2qOi6Bc7
+5BvD/ql91xPZ7jK8
+-----END CERTIFICATE-----
