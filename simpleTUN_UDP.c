@@ -26,8 +26,12 @@
 #include <openssl/hmac.h>
 
 /* OpenSSL for Certificates */
-#include <openssl/applink.c>
+//#include <openssl/applink.c> // TODO: Check if this is required.
 #include <openssl/bio.h>
+#include <openssl/rsa.h>
+#include <openssl/crypto.h>
+#include <openssl/x509.h>
+#include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
@@ -42,6 +46,18 @@
 #define ETH_HDR_LEN 14
 #define ARP_PKT_LEN 28
 
+/* Certificate Locations */
+#define CERTF_CLIENT "./CA/client.crt"
+#define KEYF_CLIENT "./CA/client.key"
+#define CERTF_SERVER "./CA/server.crt"
+#define KEYF_SERVER "./CA/server.key"
+#define CERTF_CA "./CA/crt"
+
+/* OpenSSL Error Checking */
+#define CHK_NULL(x) if ((x)==NULL) exit (1)
+#define CHK_ERR(err,s) if ((err)==-1) { perror(s); exit(1); }
+#define CHK_SSL(err) if ((err)==-1) { ERR_print_errors_fp(stderr); exit(2); }
+
 int debug;
 char *progname;
 
@@ -50,8 +66,8 @@ socklen_t remotelen;
 
 /****** Encryption + Decryption + Hash *********************/
 
-HMAC_CTX hmac;
-EVP_CIPHER_CTX en, de;
+HMAC_CTX *hmac;
+EVP_CIPHER_CTX *en, *de;
 unsigned int salt[] = {12345, 54321};
 unsigned char *key_data = "key";
 int key_data_len = 3;
@@ -161,6 +177,7 @@ int check_hmac(unsigned char *hmacA, unsigned char *hmacB, unsigned int nBytes){
 		if(hmacA[idx] != hmacB[idx]) return 0;
 	}
 	return 1;
+}
 	
 /***********************************************************
  * Initialize SSL                                          *
@@ -183,10 +200,10 @@ void DestroySSL() {
 /***********************************************************
  * Shutdown SSL                                            *
  ***********************************************************/
-void ShutdownSSL() {
+/*void ShutdownSSL() {
   SSL_shutdown(ssl);
   SSL_free(ssl);
-}
+}*/
 
 /****** VPN protocol ***************************************/
 
@@ -328,13 +345,16 @@ int main(int argc, char *argv[]){
   int header_len = IP_HDR_LEN;
   int maxfd;
   uint16_t nread, nwrite, plength;
-//  uint16_t total_len, ethertype;
   char buffer[BUFSIZE];
   char remote_ip[16] = "";
   unsigned short int port = PORT;
   int sock_fd, net_fd, optval = 1;
   int cliserv = -1;    /* must be specified on cmd line */
   unsigned long int tap2net = 0, net2tap = 0;
+  SSL* ssl;				// SSL Structure
+  SSL_CTX* ctx;
+  SSL_METHOD* meth;
+  X509 *server_cert, *client_cert; // Certificates
 
   progname = argv[0];
   
@@ -405,7 +425,6 @@ int main(int argc, char *argv[]){
     perror("socket()");
     exit(1);
   }
-
   if(cliserv==CLIENT){
     /* Client, try to connect to server */
 
@@ -429,8 +448,76 @@ int main(int argc, char *argv[]){
 	}
 	
     net_fd = sock_fd;
-    do_debug("CLIENT: Connected to server %s\n", inet_ntoa(remote.sin_addr));
+
+	/* Start initializing TLS Connection */
+	InitializeSSL();
+	
+	// SSL context initialization
+	meth = (SSL_METHOD *)SSLv23_client_method();
+	ctx = SSL_CTX_new(meth);
+	
+	if(ctx == NULL){
+		perror("Create CTX error for Client");
+		exit(EXIT_FAILURE);
+	}
+	
+	/* Load certificates of CA */
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+	SSL_CTX_load_verify_locations(ctx, CERTF_CA, NULL); 
+	
+	/* Load certificates of Client */
+	if(SSL_CTX_use_certificate_file(ctx, CERTF_CLIENT, SSL_FILETYPE_PEM) <= 0){
+		ERR_print_errors_fp(stderr);
+		exit(EXIT_FAILURE);
+	}
+	if(SSL_CTX_use_PrivateKey_file(ctx, KEYF_CLIENT, SSL_FILETYPE_PEM) <= 0){
+		ERR_print_errors_fp(stderr);
+		exit(EXIT_FAILURE);
+	}
+	if(!SSL_CTX_check_private_key(ctx)){
+		perror("Private key doesn't match the certificate public key");
+		exit(EXIT_FAILURE);
+	}
+	
+	// Create a new SSL structure for a connection
+	if((ssl = SSL_new(ctx)) == NULL){
+		perror("Error with making SSL connection from Client");
+		exit(EXIT_FAILURE);
+	}
+	SSL_set_fd(ssl, sock_fd);
+	if(SSL_connect(ssl) == -1){
+		ERR_print_errors_fp(stderr);
+		exit(EXIT_FAILURE);
+	}
+	 
+	/* Get the cipher opt */
+    do_debug("CLIENT: SSL Connection using %s\n", SSL_get_cipher(ssl));
     
+    /* Get server's certificate */
+    if((server_cert = SSL_get_peer_certificate(ssl)) == NULL){
+		perror("Can't get server's certificate");
+		exit(EXIT_FAILURE);
+	}
+	
+	char *certificateBuffer;
+	certificateBuffer = X509_NAME_oneline(X509_get_subject_name(server_cert), 0, 0);
+	if(certificateBuffer == NULL){
+		perror("Can't get the subject from the server's certificate");
+		exit(EXIT_FAILURE);
+	}
+	OPENSSL_free(certificateBuffer);
+	
+	certificateBuffer = X509_NAME_oneline(X509_get_issuer_name(server_cert), 0, 0);
+	if(certificateBuffer == NULL){
+		perror("Can't get the issuer from the server's certificate");
+		exit(EXIT_FAILURE);
+	}
+	OPENSSL_free(certificateBuffer);
+	
+	/* Deallocating the certificate */
+	X509_free(server_cert);
+    
+    do_debug("CLIENT: SSL Connection to server %s is sucessful\n", inet_ntoa(remote.sin_addr));
   } else {
     /* Server, wait for connections */
 
@@ -464,11 +551,77 @@ int main(int argc, char *argv[]){
 	}
     net_fd = sock_fd;
 
-    do_debug("SERVER: Client connected from %s\n", inet_ntoa(remote.sin_addr));
+	/* SSL context initialization */
+	InitializeSSL();
+	meth = (SSL_METHOD *)SSLv23_client_method();
+	ctx = SSL_CTX_new(meth);
+	
+	if(ctx == NULL){
+		perror("Create CTX error for Server");
+		exit(EXIT_FAILURE);
+	}
+	
+	/* Load certificates for CA */
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+	SSL_CTX_load_verify_locations(ctx, CERTF_CA, NULL);
+	
+	/* Load certificates for Server */
+	if(SSL_CTX_use_certificate_file(ctx, CERTF_SERVER, SSL_FILETYPE_PEM) <= 0){
+		ERR_print_errors_fp(stderr);
+		exit(EXIT_FAILURE);
+	}
+	if(SSL_CTX_use_PrivateKey_file(ctx, KEYF_SERVER, SSL_FILETYPE_PEM) <= 0){
+		ERR_print_errors_fp(stderr);
+		exit(EXIT_FAILURE);
+	}
+	if(!SSL_CTX_check_private_key(ctx)){
+		perror("Private key doesn't match the certificate public key");
+		exit(EXIT_FAILURE);
+	}
+	
+	// Create a new SSL structure for a connection
+	if((ssl = SSL_new(ctx)) == NULL){
+		perror("Error with making SSL connection from Server");
+		exit(EXIT_FAILURE);
+	}
+	SSL_set_fd(ssl, sock_fd);
+	if(SSL_accept(ssl) == -1){
+		ERR_print_errors_fp(stderr);
+		exit(EXIT_FAILURE);
+	}
+	
+	/* Get the cipher */
+	do_debug("SERVER: SSL Connection using %s\n", SSL_get_cipher(ssl));
+	
+	/* Get client's certificate */
+	if((client_cert = SSL_get_peer_certificate(ssl)) == NULL){
+		perror("Can't get client's certificate");
+		exit(EXIT_FAILURE);
+	}
+	
+	char *certificateBuffer;
+	certificateBuffer = X509_NAME_oneline(X509_get_subject_name(client_cert), 0, 0);
+	if(certificateBuffer == NULL){
+		perror("Can't get the subject from the client's certificate");
+		exit(EXIT_FAILURE);
+	}
+	OPENSSL_free(certificateBuffer);
+	
+	certificateBuffer = X509_NAME_oneline(X509_get_issuer_name(client_cert), 0, 0);
+	if(certificateBuffer == NULL){
+		perror("Can't get the issuer from the client's certificate");
+		exit(EXIT_FAILURE);
+	}
+	OPENSSL_free(certificateBuffer);
+	
+	/* Deallocating the certificate */
+	X509_free(client_cert);
+    
+    do_debug("SERVER: SSL Connection from client %s is sucessful\n", inet_ntoa(remote.sin_addr));
   }
   
   // Initialize AES
-  aes_hmac_init(key_data, key_data_len, (unsigned char*)&salt, &en, &de, &hmac);
+  aes_hmac_init(key_data, key_data_len, (unsigned char*)&salt, en, de, hmac);
 
   while(1) {
     int ret;
@@ -499,7 +652,7 @@ int main(int argc, char *argv[]){
 		copyBytes(buffer, input, nread);
 		
 		unsigned char *ciphertext;
-	    ciphertext = aes_encrypt(&en, input, &len);
+	    ciphertext = aes_encrypt(en, input, &len);
 		do_debug("\tinput = %s [%d]\n", printHex(input, nread), nread );
 		do_debug("\tciphertext = %s[%d]\n",printHex(ciphertext, len), len);
 		// fix the length of the header
@@ -512,7 +665,7 @@ int main(int argc, char *argv[]){
 		
 		len = 84;
 		int tmp_len = 84;
-		unsigned char* hmac_result = gen_hmac(&hmac, input, &tmp_len);
+		unsigned char* hmac_result = gen_hmac(hmac, input, &tmp_len);
 		do_debug("\tinput = %s [%d]\n", printHex(input, 84), 84);
 		do_debug("\tHMAC = %s [%d]\n", printHex(hmac_result, len), len);
 		nwrite = cwrite(net_fd, hmac_result, len);
@@ -538,7 +691,7 @@ int main(int argc, char *argv[]){
         nread = read_n(net_fd, buffer, len);  
         
 		do_debug("\tciphertext = %s[%d]\n", printHex(buffer, len), len);
-		char *decryptedText = (char *)aes_decrypt(&de, buffer, &len);
+		char *decryptedText = (char *)aes_decrypt(de, buffer, &len);
 		do_debug("\tdecryptedText = %s[%d]\n", printHex(decryptedText, len), len);
 		
 		read_n(net_fd, buffer, 32);
@@ -546,14 +699,14 @@ int main(int argc, char *argv[]){
 		do_debug("\thmac           = %s\n", printHex(buffer, 32));
 		
 		unsigned char *generated_hmac;
-		generated_hmac = gen_hmac(&hmac, decryptedText, &len);
+		generated_hmac = gen_hmac(hmac, decryptedText, &len);
 		do_debug("\tgenerated HMAC = %s [%d]\n", printHex(generated_hmac, len), len);
 		
 		nwrite = cwrite(tap_fd, decryptedText, len);
 		
-		if(check_hmac(obtained_hmac, generated_hmac, 32)){
+		if(check_hmac(obtained_hmac, generated_hmac, (unsigned int)32)){
 			perror("HMAC checking failed");
-			exit(0);
+			exit(EXIT_FAILURE);
 		}
 		
 		net2tap++;
