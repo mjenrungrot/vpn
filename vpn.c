@@ -208,7 +208,7 @@ int main(int argc, char *argv[]){
     }
     do_debug("Successfully connected to interface %s\n", if_name);
 
-    /* Create a socket for VPN's UDP connection */=
+    /* Create a socket for VPN's UDP connection */
     if ( (sock_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         perror("socket() - VPN's UDP");
         exit(EXIT_FAILURE);
@@ -369,7 +369,7 @@ int main(int argc, char *argv[]){
             perror("Server: listen() - TCP");
             exit(EXIT_FAILURE);
         }
-        remote_len = sizeof(remote);
+        int remote_len = sizeof(remote);
         int tmp_fd = sock_TCP_fd;
         if((sock_TCP_fd = accept(sock_TCP_fd, (struct sockaddr*)&remote, &remotelen)) < 0){
             perror("Server: accept() - TCP");
@@ -515,7 +515,7 @@ int main(int argc, char *argv[]){
             nread = read_n(net_fd, buffer, len);  
             
             // Decrypt the message
-            char *decryptedText = (char *)as_decrypt(de, buffer, &len);
+            char *decryptedText = (char *)aes_decrypt(de, buffer, &len);
             do_debug("\tciphertext = %s[%d]\n", printHex(buffer, len), len);
             do_debug("\tdecryptedText = %s[%d]\n", printHex(decryptedText, len), len);
             
