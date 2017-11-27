@@ -18,6 +18,7 @@
 /* OpenSSL for AES-256 algorithm */
 #include <openssl/evp.h>
 #include <openssl/aes.h>
+#include <openssl/rand.h>
 
 /* OpenSSL for SHA-256 algorithm */
 #include <openssl/sha.h>
@@ -35,7 +36,6 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-
 /* buffer for reading from tun/tap interface, must be >= 1500 */
 #define BUFSIZE 2000   
 #define CLIENT 0
@@ -52,7 +52,7 @@
 #define KEYF_CLIENT "./CA/client.key"
 #define CERTF_SERVER "./CA/server.crt"
 #define KEYF_SERVER "./CA/server.key"
-#define CERTF_CA "./CA/crt"
+#define CERTF_CA "./CA/CA.crt"
 
 /* OpenSSL Error Checking */
 #define CHK_NULL(x) if ((x)==NULL) exit (1)
@@ -69,17 +69,14 @@ socklen_t remotelen;
 
 HMAC_CTX *hmac;
 EVP_CIPHER_CTX *en, *de;
-unsigned int salt[] = {12345, 54321};
-unsigned char *key_data = "key";
-int key_data_len = 3;
-char key[32];
-char iv[32];
+unsigned char key[32];
+unsigned char iv[32];
 
 unsigned char* copyBytes(unsigned char *sourceStr, unsigned char *destinationStr, int len);
 unsigned char* printHex(unsigned char *string, int len);
 void sha256hash(char *string, char outputBuffer[65]);
-int aes_hmac_init(unsigned char *key_data, int key_data_len, unsigned char *salt,
-                      char *key, char *iv,
+void generateKeyIV(unsigned char *key, unsigned char *iv);
+int aes_hmac_init(unsigned char *key, unsigned char *iv,
 	              EVP_CIPHER_CTX *e_ctx, EVP_CIPHER_CTX *d_ctx,
 	              HMAC_CTX *hmac);
 unsigned char *aes_encrypt(EVP_CIPHER_CTX *e, unsigned char *plaintext, int *len);
@@ -216,48 +213,56 @@ int main(int argc, char *argv[]){
         perror("socket() - VPN's UDP");
         exit(EXIT_FAILURE);
     }
+    do_debug("Successfully create a UDP socket\n");
 
     /* Create a socket for SSL's TCP control channel */
     if( (sock_TCP_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0){
         perror("socker() - SSL's TCP");
         exit(EXIT_FAILURE);
     }
+    do_debug("Successfully create a TCP socket\n");
   
     /* CLIENT: */
     if(cliserv==CLIENT){
         /*************** VPN's UDP Connection **************/
-
-        /* assign the destination address */
+		
+        // assign the destination address 
         memset(&remote, 0, sizeof(remote));
         remote.sin_family = AF_INET;
         remote.sin_addr.s_addr = inet_addr(remote_ip);
         remote.sin_port = htons(port);
 
-        /* connection request */
+        // connection request 
         char *hello = "hello";
         if (sendto(sock_fd, hello, strlen(hello), 0, (struct sockaddr*) &remote, sizeof(remote)) < 0){
             perror("sendto()");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
         
-        /* Connect to the server using UDP connection */
+        // Connect to the server using UDP connection 
         if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
             perror("connect() - UDP");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
-        
+        do_debug("Client: Finish UDP Connection\n");
         net_fd = sock_fd;
 
         /*************** SSL's TCP Connection **************/
 
+        memset(&remote, 0, sizeof(remote));
+        remote.sin_family = AF_INET;
+        remote.sin_addr.s_addr = inet_addr(remote_ip);
+        remote.sin_port = htons(port+1);
+        
         /* Connect to the server using TCP connection */
         if(connect(sock_TCP_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
             perror("connect() - TCP");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
+        do_debug("Client: finish connect()\n");
 
 	    /* Start initializing TLS Connection */
-	    InitializeSSL();
+	    {InitializeSSL();
 	
         /* SSL context initialization */
         meth = (SSL_METHOD *)SSLv23_client_method();
@@ -324,33 +329,34 @@ int main(int argc, char *argv[]){
         X509_free(server_cert);
         
         do_debug("CLIENT: SSL Connection to server %s is sucessful\n", inet_ntoa(remote.sin_addr));
+        generateKeyIV(key, iv);
+        aes_hmac_init(key, iv, en, de, hmac);
         
-        aes_hmac_init(key_data, key_data_len, (unsigned char*)&salt, key, iv,  en, de, hmac);
-        
-        SSL_write(ssl, key, strlen(key));
-        SSL_write(ssl, iv, strlen(iv));
-    
+        SSL_write(ssl, key, 32);
+        SSL_write(ssl, iv, 32);
+	}
     /* SERVER: */
     } else {
-        /* Server, wait for connections */
+        // Server, wait for connections 
 
         /*************** VPN's UDP Connection **************/
-        /* avoid EADDRINUSE error on bind() */
+        // avoid EADDRINUSE error on bind()  
         if(setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval)) < 0){
-            perror("setsockopt()");
-            exit(1);
+            perror("setsockopt() - UDP");
+            exit(EXIT_FAILURE);
         }
     
         memset(&local, 0, sizeof(local));
         local.sin_family = AF_INET;
         local.sin_addr.s_addr = htonl(INADDR_ANY);
         local.sin_port = htons(port);
-        if (bind(sock_fd, (struct sockaddr*) &local, sizeof(local)) < 0){
+		if (bind(sock_fd, (struct sockaddr*) &local, sizeof(local)) < 0){
             perror("bind() - UDP");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
+        do_debug("Server: Finish bind()\n");
         
-        /* wait for connection request */
+        // wait for connection request 
         remotelen = sizeof(remote);
         memset(&remote, 0, remotelen);
         int len;
@@ -358,37 +364,54 @@ int main(int argc, char *argv[]){
             perror("recvfrom() - UDP");
             exit(EXIT_FAILURE);
         }
+        do_debug("Server: Finish recvfrom()\n");
         
-        /* Connect to the client using UDP connection */
+        // Connect to the client using UDP connection 
         if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
             perror("connect() - UDP");
             exit(EXIT_FAILURE);
         }
         net_fd = sock_fd;
+        
+        do_debug("Server: Finish UDP connection\n");
 
         /*************** SSL's TCP Connection **************/
         
         /* Connect to the client using TCP connection */
+        if(setsockopt(sock_TCP_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval)) < 0){
+            perror("setsockopt() - TCP");
+            exit(EXIT_FAILURE);
+        }
+        do_debug("Server: Finish setsockopt() - TCP\n");
+        memset(&local, 0, sizeof(local));
+        local.sin_family = AF_INET;
+        local.sin_addr.s_addr = htonl(INADDR_ANY);
+        local.sin_port = htons(port+1);
         if(bind(sock_TCP_fd, (struct sockaddr*)&local, sizeof(local)) < 0){
             perror("Server: bind() - TCP");
             exit(EXIT_FAILURE);
         }
+        do_debug("Server: Finish bind() - TCP\n");
         if(listen(sock_TCP_fd, 5) < 0){
             perror("Server: listen() - TCP");
             exit(EXIT_FAILURE);
         }
-        int remote_len = sizeof(remote);
-        int tmp_fd = sock_TCP_fd;
+        do_debug("Server: Finish listen() - TCP\n");
+        remotelen = sizeof(remote);
+        memset(&remote, 0, remotelen);
         if((sock_TCP_fd = accept(sock_TCP_fd, (struct sockaddr*)&remote, &remotelen)) < 0){
             perror("Server: accept() - TCP");
             exit(EXIT_FAILURE);
         }
-        close(tmp_fd);
+        do_debug("Server: Finish accept() - TCP\n");
 	
         /* SSL context initialization */
         InitializeSSL();
+        do_debug("Server: Finish InitializeSSL()\n");
         meth = (SSL_METHOD *)SSLv23_client_method();
+        do_debug("Server: Finish creating SSL_METHOD\n");
         ctx = SSL_CTX_new(meth);
+        do_debug("Server: Finish creating SSL_CTX\n");
         
         if(ctx == NULL){
             perror("Create CTX error for Server");
@@ -398,16 +421,19 @@ int main(int argc, char *argv[]){
         /* Load certificates for CA */
         SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
         SSL_CTX_load_verify_locations(ctx, CERTF_CA, NULL);
+        do_debug("Server: Finish loading certificates for CA\n");
         
         /* Load certificates for Server */
         if(SSL_CTX_use_certificate_file(ctx, CERTF_SERVER, SSL_FILETYPE_PEM) <= 0){
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
+        do_debug("Server: Finish loading certificates for Server\n");
         if(SSL_CTX_use_PrivateKey_file(ctx, KEYF_SERVER, SSL_FILETYPE_PEM) <= 0){
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
+        do_debug("Server: Finish loading private key for Server\n");
         if(!SSL_CTX_check_private_key(ctx)){
             perror("Private key doesn't match the certificate public key");
             exit(EXIT_FAILURE);
@@ -453,15 +479,15 @@ int main(int argc, char *argv[]){
         
         do_debug("SERVER: SSL Connection from client %s is sucessful\n", inet_ntoa(remote.sin_addr));
 
-        char client_key[32];
-	char client_iv[32];
-
-	SSL_read(ssl, client_key, sizeof(client_key));
-	SSL_read(ssl, client_iv, sizeof(client_iv));
+		SSL_read(ssl, key, 32);
+		SSL_read(ssl, iv, 32);
+       
+        // Initialize AES + HMAC with the client's session key and IV
+        aes_hmac_init(key, iv, en, de, hmac);
+        
     }
   
     // Initialize AES
-    // aes_hmac_init(key_data, key_data_len, (unsigned char*)&salt, key, iv,  en, de, hmac);
 
     while(1) {
         int ret;

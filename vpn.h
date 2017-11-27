@@ -30,22 +30,25 @@ void sha256hash(char *string, char outputBuffer[65]){
 	outputBuffer[64] = 0;
 }
 
+void generateKeyIV(unsigned char *key, unsigned char *iv){
+	if(!RAND_bytes(key, 32)){
+		perror("Failed to generate a random key");
+		exit(EXIT_FAILURE);
+	}
+	if(!RAND_bytes(iv, 16)){
+		perror("Failed to generate a random IV");
+		exit(EXIT_FAILURE);
+	}
+}
+
 /**************************************************************************
- * aes_hmac_init: Generate random key + iv
- * 
+ * aes_hmac_init: Initialize AES + HMAC with given key and IV
+ * Expeceted: key - 32 bytes (256-bit) 
+ *            iv  - 16 bytes (128-bit)
  **************************************************************************/
-int aes_hmac_init(unsigned char *key_data, int key_data_len, unsigned char *salt,
-		      char *key, char *iv,
+int aes_hmac_init(unsigned char *key, unsigned char *iv,
 	              EVP_CIPHER_CTX *e_ctx, EVP_CIPHER_CTX *d_ctx,
 	              HMAC_CTX *hmac){
-	int i, nrounds = 5;
-
-	i = EVP_BytesToKey(EVP_aes_256_cbc(), EVP_sha1(), salt, key_data, key_data_len, nrounds, key, iv);
-	if( i != 32 ){
-		printf("Key size = %d\n", i);
-		return -1;
-	}
-
 	// Encrypt + Decrypt 
 	EVP_CIPHER_CTX_init(e_ctx);
 	EVP_EncryptInit_ex(e_ctx, EVP_aes_256_cbc(), NULL, key, iv);
@@ -54,7 +57,7 @@ int aes_hmac_init(unsigned char *key_data, int key_data_len, unsigned char *salt
 	
 	// HMAC
 	HMAC_CTX_init(hmac);
-	HMAC_Init_ex(hmac, key_data, (int)strlen(key_data), EVP_sha256(), NULL);
+	HMAC_Init_ex(hmac, key, 32, EVP_sha256(), NULL);
 }
 
 /**************************************************************************
