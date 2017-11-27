@@ -72,11 +72,14 @@ EVP_CIPHER_CTX *en, *de;
 unsigned int salt[] = {12345, 54321};
 unsigned char *key_data = "key";
 int key_data_len = 3;
+char key[32];
+char iv[32];
 
 unsigned char* copyBytes(unsigned char *sourceStr, unsigned char *destinationStr, int len);
 unsigned char* printHex(unsigned char *string, int len);
 void sha256hash(char *string, char outputBuffer[65]);
 int aes_hmac_init(unsigned char *key_data, int key_data_len, unsigned char *salt,
+                      char *key, char *iv,
 	              EVP_CIPHER_CTX *e_ctx, EVP_CIPHER_CTX *d_ctx,
 	              HMAC_CTX *hmac);
 unsigned char *aes_encrypt(EVP_CIPHER_CTX *e, unsigned char *plaintext, int *len);
@@ -447,7 +450,7 @@ int main(int argc, char *argv[]){
     }
   
     // Initialize AES
-    aes_hmac_init(key_data, key_data_len, (unsigned char*)&salt, en, de, hmac);
+    aes_hmac_init(key_data, key_data_len, (unsigned char*)&salt, key, iv,  en, de, hmac);
 
     while(1) {
         int ret;

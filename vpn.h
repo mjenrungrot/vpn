@@ -35,10 +35,10 @@ void sha256hash(char *string, char outputBuffer[65]){
  * 
  **************************************************************************/
 int aes_hmac_init(unsigned char *key_data, int key_data_len, unsigned char *salt,
+		      char *key, char *iv,
 	              EVP_CIPHER_CTX *e_ctx, EVP_CIPHER_CTX *d_ctx,
 	              HMAC_CTX *hmac){
 	int i, nrounds = 5;
-	unsigned char key[32], iv[32];
 
 	i = EVP_BytesToKey(EVP_aes_256_cbc(), EVP_sha1(), salt, key_data, key_data_len, nrounds, key, iv);
 	if( i != 32 ){
