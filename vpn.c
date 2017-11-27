@@ -324,6 +324,11 @@ int main(int argc, char *argv[]){
         X509_free(server_cert);
         
         do_debug("CLIENT: SSL Connection to server %s is sucessful\n", inet_ntoa(remote.sin_addr));
+        
+        aes_hmac_init(key_data, key_data_len, (unsigned char*)&salt, key, iv,  en, de, hmac);
+        
+        SSL_write(ssl, key, strlen(key));
+        SSL_write(ssl, iv, strlen(iv));
     
     /* SERVER: */
     } else {
@@ -447,10 +452,16 @@ int main(int argc, char *argv[]){
         X509_free(client_cert);
         
         do_debug("SERVER: SSL Connection from client %s is sucessful\n", inet_ntoa(remote.sin_addr));
+
+        char client_key[32];
+	char client_iv[32];
+
+	SSL_read(ssl, client_key, sizeof(client_key));
+	SSL_read(ssl, client_iv, sizeof(client_iv));
     }
   
     // Initialize AES
-    aes_hmac_init(key_data, key_data_len, (unsigned char*)&salt, key, iv,  en, de, hmac);
+    // aes_hmac_init(key_data, key_data_len, (unsigned char*)&salt, key, iv,  en, de, hmac);
 
     while(1) {
         int ret;
