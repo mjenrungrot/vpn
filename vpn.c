@@ -567,13 +567,39 @@ int main(int argc, char *argv[]){
 				if(!strncmp(commandBuffer, CHANGE_KEY_COMMAND, 1)){
 					memset(argumentBuffer, 0, sizeof(argumentBuffer));
 					SSL_read(ssl, argumentBuffer, 64);
+					
+					size_t currentBufferLength = 0;
+					size_t idx;
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));
+					
+					pipeBuffer[currentBufferLength++] = CHANGE_KEY_COMMAND;
+					for(idx=0;idx<64;idx+=2){
+					    pipeBuffer[currentBufferLength] = hexToInt(argumentBuffer[idx]) << 8 | hexToInt(argumentBuffer[idx+1]);
+					    currentBufferLength++;
+					}
+					
 					do_debug("The server will set a new key to %s\n", argumentBuffer);
 				}else if(!strncmp(commandBuffer, CHANGE_IV_COMMAND, 1)){
 					memset(argumentBuffer, 0, sizeof(argumentBuffer));
 					SSL_read(ssl, argumentBuffer, 32);
+					
+					size_t currentBufferLength = 0;
+					size_t idx;
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));
+					
+					pipeBuffer[currentBufferLength++] = CHANGE_IV_COMMAND;
+					for(idx=0;idx<32;idx+=2){
+					    pipeBuffer[currentBufferLength] = hexToInt(argumentBuffer[idx]) << 8 | hexToInt(argumentBuffer[idx+1]);
+					    currentBufferLength++;
+					}
+					
 					do_debug("The server will set a new iv to %s\n", argumentBuffer);
 				}else if(!strncmp(commandBuffer, BREAK_COMMAND, 1)){
 					do_debug("The server will break the tunnel\n");
+					
+					size_t currentBufferLength = 0;
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));	
+					pipeBuffer[currentBufferLength++] = BREAK_COMMAND;
 				}
 				do_debug("buffer is = [%s]\n",commandBuffer);
 			}
@@ -588,13 +614,33 @@ int main(int argc, char *argv[]){
 		if(read(p[READ], pipeBuffer, PIPE_BUF_SIZE) != -1){
 			if(!strncmp(pipeBuffer, CHANGE_KEY_COMMAND, 1)){
 				// TODO: Update the key
-				printf("New key is %s\n", &pipeBuffer[1]);
+				unsigned char newkey[32];
+				size_t idx; 
+				printf("Set new key to ");
+				for(idx=0;idx<32;idx++){
+					newiv[idx] = pipeBuffer[idx+1]; 
+					printf("%02x", newiv[idx]);
+				}
+				printf("\n");
+				EVP_EncryptInit_ex(en, NULL, NULL, newkey, NULL);	
+				EVP_DecryptInit_ex(de, NULL, NULL, newkey, NULL);
+				HMAC_Init_ex(hmac, newkey, 32, NULL, NULL);
 			}else if(!strncmp(pipeBuffer, CHANGE_IV_COMMAND, 1)){
 				// TODO: Update the iv
-				printf("New iv is %s\n", &pipeBuffer[1]);
+				unsigned char newiv[16];
+				size_t idx; 
+				printf("Set new IV to ");
+				for(idx=0;idx<16;idx++){
+					newiv[idx] = pipeBuffer[idx+1]; 
+					printf("%02x", newiv[idx]);
+				}
+				printf("\n");
+				EVP_EncryptInit_ex(en, NULL, NULL, NULL, newiv);	
+				EVP_DecryptInit_ex(de, NULL, NULL, NULL, newiv);
 			}else if(!strncmp(pipeBuffer, BREAK_COMMAND, 1)){
 				// TODO: Break the tunnel
 				printf("This tunnel will break as notified by the child\n");
+				break;
 			}
 		}
 		
