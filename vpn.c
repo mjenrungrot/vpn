@@ -36,6 +36,12 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+/* The index of the "read" end of the pipe */
+#define READ 0
+/* The index of the "write" end of the pipe */
+#define WRITE 1
+#define PIPE_BUF_SIZE 100
+
 /* buffer for reading from tun/tap interface, must be >= 1500 */
 #define BUFSIZE 2000   
 #define CLIENT 0
@@ -46,6 +52,11 @@
 #define IP_HDR_LEN 20
 #define ETH_HDR_LEN 14
 #define ARP_PKT_LEN 28
+
+/* command for change iv, change key, and break the tunnel */
+#define CHANGE_KEY_COMMAND "1"
+#define CHANGE_IV_COMMAND "2"
+#define BREAK_COMMAND "3"
 
 /* Certificate Locations */
 #define CERTF_CLIENT "./CA/client.crt"
@@ -72,6 +83,7 @@ EVP_CIPHER_CTX en, de;
 unsigned char key[32];
 unsigned char iv[32];
 
+int checkValidHexString(char *string, int len);
 unsigned char* copyBytes(unsigned char *sourceStr, unsigned char *destinationStr, int len);
 unsigned char* printHex(unsigned char *string, int len);
 void sha256hash(char *string, char outputBuffer[65]);
@@ -127,6 +139,9 @@ int main(int argc, char *argv[]){
     int maxfd;
     uint16_t nread, nwrite, plength;
     char buffer[BUFSIZE];
+	char commandBuffer[BUFSIZE];
+	char argumentBuffer[BUFSIZE];
+	char pipeBuffer[PIPE_BUF_SIZE];
     char remote_ip[16] = "";
     unsigned short int port = PORT;
     int sock_fd, net_fd, sock_TCP_fd, optval = 1;
@@ -136,6 +151,18 @@ int main(int argc, char *argv[]){
     SSL_CTX* ctx;
     SSL_METHOD* meth;
     X509 *server_cert, *client_cert; // Certificates
+
+	int pipe_fd[2];
+	if(pipe(pipe_fd) < 0){
+		perror("error creating unnamed pipe\n");
+		exit(EXIT_FAILURE);
+	}
+	
+	// error checking for fcntl
+    if (fcntl(p[0], F_SETFL, O_NONBLOCK) < 0){
+		perror("error making a pipe non-blocking\n");
+        exit(EXIT_FAILURE);
+	}
 
     progname = argv[0];
   
@@ -226,122 +253,156 @@ int main(int argc, char *argv[]){
     if(cliserv==CLIENT){
         /*************** VPN's UDP Connection **************/
 		
-        // assign the destination address 
-        memset(&remote, 0, sizeof(remote));
-        remote.sin_family = AF_INET;
-        remote.sin_addr.s_addr = inet_addr(remote_ip);
-        remote.sin_port = htons(port);
+		// assign the destination address 
+		memset(&remote, 0, sizeof(remote));
+		remote.sin_family = AF_INET;
+		remote.sin_addr.s_addr = inet_addr(remote_ip);
+		remote.sin_port = htons(port);
 
-        // connection request 
-        char *hello = "hello";
-        if (sendto(sock_fd, hello, strlen(hello), 0, (struct sockaddr*) &remote, sizeof(remote)) < 0){
-            perror("sendto()");
-            exit(EXIT_FAILURE);
-        }
-        
-        // Connect to the server using UDP connection 
-        if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
-            perror("connect() - UDP");
-            exit(EXIT_FAILURE);
-        }
-        do_debug("Client: Finish UDP Connection\n");
-        net_fd = sock_fd;
+		// connection request 
+		char *hello = "hello";
+		if (sendto(sock_fd, hello, strlen(hello), 0, (struct sockaddr*) &remote, sizeof(remote)) < 0){
+			perror("sendto()");
+			exit(EXIT_FAILURE);
+		}
+		
+		// Connect to the server using UDP connection 
+		if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
+			perror("connect() - UDP");
+			exit(EXIT_FAILURE);
+		}
+		do_debug("Client: Finish UDP Connection\n");
+		net_fd = sock_fd;
+		
+		/*************** SSL's TCP Connection **************/
 
-        /*************** SSL's TCP Connection **************/
+		memset(&remote, 0, sizeof(remote));
+		remote.sin_family = AF_INET;
+		remote.sin_addr.s_addr = inet_addr(remote_ip);
+		remote.sin_port = htons(port);
+		
+		/* Connect to the server using TCP connection */
+		if(connect(sock_TCP_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
+			perror("connect() - TCP");
+			exit(EXIT_FAILURE);
+		}
+		do_debug("Client: finish connect()\n");
 
-        memset(&remote, 0, sizeof(remote));
-        remote.sin_family = AF_INET;
-        remote.sin_addr.s_addr = inet_addr(remote_ip);
-        remote.sin_port = htons(port);
-        
-        /* Connect to the server using TCP connection */
-        if(connect(sock_TCP_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
-            perror("connect() - TCP");
-            exit(EXIT_FAILURE);
-        }
-        do_debug("Client: finish connect()\n");
-
-	    /* Start initializing TLS Connection */
-	    {InitializeSSL();
+		/* Start initializing TLS Connection */
+		{InitializeSSL();
 	
-        /* SSL context initialization */
-        meth = (SSL_METHOD *)SSLv23_client_method();
-        ctx = SSL_CTX_new(meth);
-        if(ctx == NULL){
-            perror("Create CTX error for Client");
-            exit(EXIT_FAILURE);
-        }
+		/* SSL context initialization */
+		meth = (SSL_METHOD *)SSLv23_client_method();
+		ctx = SSL_CTX_new(meth);
+		if(ctx == NULL){
+			perror("Create CTX error for Client");
+			exit(EXIT_FAILURE);
+		}
 	
-        /* Load certificates for CA */
-        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-        SSL_CTX_load_verify_locations(ctx, CERTF_CA, NULL); 
+		/* Load certificates for CA */
+		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+		SSL_CTX_load_verify_locations(ctx, CERTF_CA, NULL); 
 	
-        /* Load certificates for Client */
-        if(SSL_CTX_use_certificate_file(ctx, CERTF_CLIENT, SSL_FILETYPE_PEM) <= 0){
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
-        if(SSL_CTX_use_PrivateKey_file(ctx, KEYF_CLIENT, SSL_FILETYPE_PEM) <= 0){
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
-        if(!SSL_CTX_check_private_key(ctx)){
-            perror("Private key doesn't match the certificate public key");
-            exit(EXIT_FAILURE);
-        }
+		/* Load certificates for Client */
+		if(SSL_CTX_use_certificate_file(ctx, CERTF_CLIENT, SSL_FILETYPE_PEM) <= 0){
+			ERR_print_errors_fp(stderr);
+			exit(EXIT_FAILURE);
+		}
+		if(SSL_CTX_use_PrivateKey_file(ctx, KEYF_CLIENT, SSL_FILETYPE_PEM) <= 0){
+			ERR_print_errors_fp(stderr);
+			exit(EXIT_FAILURE);
+		}
+		if(!SSL_CTX_check_private_key(ctx)){
+			perror("Private key doesn't match the certificate public key");
+			exit(EXIT_FAILURE);
+		}
 	
-        // Create a new SSL structure for a connection
-        if((ssl = SSL_new(ctx)) == NULL){
-            perror("Error with making SSL connection from Client");
-            exit(EXIT_FAILURE);
-        }
-        SSL_set_fd(ssl, sock_TCP_fd);
-        if(SSL_connect(ssl) == -1){
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
-        
-        /* Get the cipher opt */
-        do_debug("CLIENT: SSL Connection using %s\n", SSL_get_cipher(ssl));
-        
-        /* Get server's certificate */
-        if((server_cert = SSL_get_peer_certificate(ssl)) == NULL){
-            perror("Can't get server's certificate");
-            exit(EXIT_FAILURE);
-        }
-        
-        char *certificateBuffer;
-        certificateBuffer = X509_NAME_oneline(X509_get_subject_name(server_cert), 0, 0);
-        if(certificateBuffer == NULL){
-            perror("Can't get the subject from the server's certificate");
-            exit(EXIT_FAILURE);
-        }
-        OPENSSL_free(certificateBuffer);
-        
-        certificateBuffer = X509_NAME_oneline(X509_get_issuer_name(server_cert), 0, 0);
-        if(certificateBuffer == NULL){
-            perror("Can't get the issuer from the server's certificate");
-            exit(EXIT_FAILURE);
-        }
-        OPENSSL_free(certificateBuffer);
-        
-        /* Deallocating the certificate */
-        X509_free(server_cert);
-        
-        do_debug("CLIENT: SSL Connection to server %s is sucessful\n", inet_ntoa(remote.sin_addr));
-        generateKeyIV(key, iv);
-        do_debug("CLIENT: Finish generating KEY + IV\n");
-        
-        aes_hmac_init(key, iv, &en, &de, &hmac);
-        do_debug("CLINET: Finish aes_hmac_init\n");
-        
-        SSL_write(ssl, key, 32);
-        do_debug("CLIENT: Send key to server\n");
-        do_debug("%s\n", printHex(key, 32));
-        
-        SSL_write(ssl, iv, 16);
-        do_debug("CLIENT: Send iv to server\n");
-        do_debug("%s\n", printHex(iv, 16));
+		// Create a new SSL structure for a connection
+		if((ssl = SSL_new(ctx)) == NULL){
+			perror("Error with making SSL connection from Client");
+			exit(EXIT_FAILURE);
+		}
+		SSL_set_fd(ssl, sock_TCP_fd);
+		if(SSL_connect(ssl) == -1){
+			ERR_print_errors_fp(stderr);
+			exit(EXIT_FAILURE);
+		}
+		
+		/* Get the cipher opt */
+		do_debug("CLIENT: SSL Connection using %s\n", SSL_get_cipher(ssl));
+		
+		/* Get server's certificate */
+		if((server_cert = SSL_get_peer_certificate(ssl)) == NULL){
+			perror("Can't get server's certificate");
+			exit(EXIT_FAILURE);
+		}
+		
+		char *certificateBuffer;
+		certificateBuffer = X509_NAME_oneline(X509_get_subject_name(server_cert), 0, 0);
+		if(certificateBuffer == NULL){
+			perror("Can't get the subject from the server's certificate");
+			exit(EXIT_FAILURE);
+		}
+		OPENSSL_free(certificateBuffer);
+		
+		certificateBuffer = X509_NAME_oneline(X509_get_issuer_name(server_cert), 0, 0);
+		if(certificateBuffer == NULL){
+			perror("Can't get the issuer from the server's certificate");
+			exit(EXIT_FAILURE);
+		}
+		OPENSSL_free(certificateBuffer);
+		
+		/* Deallocating the certificate */
+		X509_free(server_cert);
+		
+		do_debug("CLIENT: SSL Connection to server %s is sucessful\n", inet_ntoa(remote.sin_addr));
+		generateKeyIV(key, iv);
+		do_debug("CLIENT: Finish generating KEY + IV\n");
+		
+		aes_hmac_init(key, iv, &en, &de, &hmac);
+		do_debug("CLINET: Finish aes_hmac_init\n");
+		
+		SSL_write(ssl, key, 32);
+		do_debug("CLIENT: Send key to server\n");
+		do_debug("%s\n", printHex(key, 32));
+		
+		SSL_write(ssl, iv, 16);
+		do_debug("CLIENT: Send iv to server\n");
+		do_debug("%s\n", printHex(iv, 16));
+		
+		if(fork() == 0){
+			close(pipe_fd[READ]);
+			while(1){
+				printf("Enter Command  (change_key|change_iv|break): ");
+				scanf("%s",commandBuffer);
+				
+				if(!strcmp(commandBuffer, "change_key")){
+					// do change key
+					printf("Please enter a new key (32 bytes = 64 characters in hex) e.g. ff1100...ab0 : ");
+					scanf("%s", argumentBuffer);
+					
+					if(checkValidHexString(argumentBuffer, 64)){
+						do_debug("The client will set a new key to %s\n", argumentBuffer);
+						SSL_write(ssl, CHANGE_KEY_COMMAND, 1);
+						SSL_write(ssl, argumentBuffer, 64);
+					}
+				}else if(!strcmp(commandBuffer, "change_iv")){
+					printf("Please enter a new IV (16 bytes = 32 characters in hex) e.g. ff1100...ab0 : ");
+					scanf("%s", argumentBuffer);
+					
+					if(checkValidHexString(argumentBuffer, 32)){
+						do_debug("The client will set a new iv to %s\n", argumentBuffer);
+						SSL_write(ssl, CHANGE_IV_COMMAND, 1);  
+						SSL_write(ssl, argumentBuffer, 32);
+					}
+				}else if(!strcmp(commandBuffer, "break")){
+					do_debug("The client will break the tunnel\n");
+					SSL_write(ssl, BREAK_COMMAND, 1);  
+				}
+				do_debug("buffer is = [%s]\n",commandBuffer);
+			}
+		}
+		close(pipe_fd[WRITE]);
 	}
     /* SERVER: */
     } else {
@@ -497,11 +558,46 @@ int main(int argc, char *argv[]){
         
         // Initialize AES + HMAC with the client's session key and IV
         aes_hmac_init(key, iv, &en, &de, &hmac);
+        
+        if(fork() == 0){
+			close(pipe_fd[READ]);
+			// Keep reading command sending over SSL 
+			while(1){
+				SSL_read(ssl, commandBuffer, 1);
+				if(!strncmp(commandBuffer, CHANGE_KEY_COMMAND, 1)){
+					memset(argumentBuffer, 0, sizeof(argumentBuffer));
+					SSL_read(ssl, argumentBuffer, 64);
+					do_debug("The server will set a new key to %s\n", argumentBuffer);
+				}else if(!strncmp(commandBuffer, CHANGE_IV_COMMAND, 1)){
+					memset(argumentBuffer, 0, sizeof(argumentBuffer));
+					SSL_read(ssl, argumentBuffer, 32);
+					do_debug("The server will set a new iv to %s\n", argumentBuffer);
+				}else if(!strncmp(commandBuffer, BREAK_COMMAND, 1)){
+					do_debug("The server will break the tunnel\n");
+				}
+				do_debug("buffer is = [%s]\n",commandBuffer);
+			}
+		}
+		close(pipe_fd[WRITE]);
     }
   
     // Initialize AES
 
     while(1) {
+		// If the buffer in the pipe is not empty, do accoridgly.
+		if(read(p[READ], pipeBuffer, PIPE_BUF_SIZE) != -1){
+			if(!strncmp(pipeBuffer, CHANGE_KEY_COMMAND, 1)){
+				// TODO: Update the key
+				printf("New key is %s\n", &pipeBuffer[1]);
+			}else if(!strncmp(pipeBuffer, CHANGE_IV_COMMAND, 1)){
+				// TODO: Update the iv
+				printf("New iv is %s\n", &pipeBuffer[1]);
+			}else if(!strncmp(pipeBuffer, BREAK_COMMAND, 1)){
+				// TODO: Break the tunnel
+				printf("This tunnel will break as notified by the child\n");
+			}
+		}
+		
         int ret;
         fd_set rd_set;
 
