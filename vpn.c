@@ -52,7 +52,7 @@
 #define KEYF_CLIENT "./CA/client.key"
 #define CERTF_SERVER "./CA/server.crt"
 #define KEYF_SERVER "./CA/server.key"
-#define CERTF_CA "./CA/CA.crt"
+#define CERTF_CA "./CA/ca.crt"
 
 /* OpenSSL Error Checking */
 #define CHK_NULL(x) if ((x)==NULL) exit (1)
@@ -67,8 +67,8 @@ socklen_t remotelen;
 
 /****** Encryption + Decryption + Hash *********************/
 
-HMAC_CTX *hmac;
-EVP_CIPHER_CTX *en, *de;
+HMAC_CTX hmac;
+EVP_CIPHER_CTX en, de;
 unsigned char key[32];
 unsigned char iv[32];
 
@@ -252,7 +252,7 @@ int main(int argc, char *argv[]){
         memset(&remote, 0, sizeof(remote));
         remote.sin_family = AF_INET;
         remote.sin_addr.s_addr = inet_addr(remote_ip);
-        remote.sin_port = htons(port+1);
+        remote.sin_port = htons(port);
         
         /* Connect to the server using TCP connection */
         if(connect(sock_TCP_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
@@ -330,10 +330,18 @@ int main(int argc, char *argv[]){
         
         do_debug("CLIENT: SSL Connection to server %s is sucessful\n", inet_ntoa(remote.sin_addr));
         generateKeyIV(key, iv);
-        aes_hmac_init(key, iv, en, de, hmac);
+        do_debug("CLIENT: Finish generating KEY + IV\n");
+        
+        aes_hmac_init(key, iv, &en, &de, &hmac);
+        do_debug("CLINET: Finish aes_hmac_init\n");
         
         SSL_write(ssl, key, 32);
-        SSL_write(ssl, iv, 32);
+        do_debug("CLIENT: Send key to server\n");
+        do_debug("%s\n", printHex(key, 32));
+        
+        SSL_write(ssl, iv, 16);
+        do_debug("CLIENT: Send iv to server\n");
+        do_debug("%s\n", printHex(iv, 16));
 	}
     /* SERVER: */
     } else {
@@ -386,7 +394,7 @@ int main(int argc, char *argv[]){
         memset(&local, 0, sizeof(local));
         local.sin_family = AF_INET;
         local.sin_addr.s_addr = htonl(INADDR_ANY);
-        local.sin_port = htons(port+1);
+        local.sin_port = htons(port);
         if(bind(sock_TCP_fd, (struct sockaddr*)&local, sizeof(local)) < 0){
             perror("Server: bind() - TCP");
             exit(EXIT_FAILURE);
@@ -408,7 +416,7 @@ int main(int argc, char *argv[]){
         /* SSL context initialization */
         InitializeSSL();
         do_debug("Server: Finish InitializeSSL()\n");
-        meth = (SSL_METHOD *)SSLv23_client_method();
+        meth = (SSL_METHOD *)SSLv23_server_method();
         do_debug("Server: Finish creating SSL_METHOD\n");
         ctx = SSL_CTX_new(meth);
         do_debug("Server: Finish creating SSL_CTX\n");
@@ -480,11 +488,15 @@ int main(int argc, char *argv[]){
         do_debug("SERVER: SSL Connection from client %s is sucessful\n", inet_ntoa(remote.sin_addr));
 
 		SSL_read(ssl, key, 32);
-		SSL_read(ssl, iv, 32);
-       
-        // Initialize AES + HMAC with the client's session key and IV
-        aes_hmac_init(key, iv, en, de, hmac);
+        do_debug("SERVER: Read key to server\n");
+        do_debug("%s\n", printHex(key, 32));
         
+		SSL_read(ssl, iv, 16);
+        do_debug("SERVER: Read iv to server\n");
+        do_debug("%s\n", printHex(iv, 16));
+        
+        // Initialize AES + HMAC with the client's session key and IV
+        aes_hmac_init(key, iv, &en, &de, &hmac);
     }
   
     // Initialize AES
@@ -519,7 +531,7 @@ int main(int argc, char *argv[]){
             copyBytes(buffer, input, nread);
 
             // Encrypt the input message
-            ciphertext = aes_encrypt(en, input, &len);
+            ciphertext = aes_encrypt(&en, input, &len);
             do_debug("\tinput = %s [%d]\n", printHex(input, nread), nread );
             do_debug("\tciphertext = %s[%d]\n",printHex(ciphertext, len), len);
 
@@ -531,7 +543,7 @@ int main(int argc, char *argv[]){
             // Write the HMAC for message verificiation
             len = 84;
             int tmp_len = 84;
-            unsigned char* hmac_result = gen_hmac(hmac, input, &tmp_len);
+            unsigned char* hmac_result = gen_hmac(&hmac, input, &tmp_len);
             nwrite = cwrite(net_fd, hmac_result, len);
             do_debug("\tinput = %s [%d]\n", printHex(input, 84), 84);
             do_debug("\tHMAC = %s [%d]\n", printHex(hmac_result, len), len);
@@ -555,7 +567,8 @@ int main(int argc, char *argv[]){
             nread = read_n(net_fd, buffer, len);  
             
             // Decrypt the message
-            char *decryptedText = (char *)aes_decrypt(de, buffer, &len);
+            char *decryptedText = (char *)aes_decrypt(&de, buffer, &len);
+            int lenDecryptedText = len;
             do_debug("\tciphertext = %s[%d]\n", printHex(buffer, len), len);
             do_debug("\tdecryptedText = %s[%d]\n", printHex(decryptedText, len), len);
             
@@ -565,18 +578,18 @@ int main(int argc, char *argv[]){
             
             // Calculate the HMAC from the received message
             unsigned char *generated_hmac;
-            generated_hmac = gen_hmac(hmac, decryptedText, &len);
+            generated_hmac = gen_hmac(&hmac, decryptedText, &len);
             do_debug("\thmac           = %s\n", printHex(buffer, 32));
             do_debug("\tgenerated HMAC = %s [%d]\n", printHex(generated_hmac, len), len);
             
             // Check two HMACs
-            if(check_hmac(obtained_hmac, generated_hmac, (unsigned int)32)){
+            if(!check_hmac(obtained_hmac, generated_hmac, (unsigned int)32)){
                 perror("HMAC checking failed");
                 exit(EXIT_FAILURE);
             }
             
             // Redirect output to the TAP interface
-            nwrite = cwrite(tap_fd, decryptedText, len);
+            nwrite = cwrite(tap_fd, decryptedText, lenDecryptedText);
             
             net2tap++;
             if(cliserv == CLIENT){

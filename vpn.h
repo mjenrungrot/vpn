@@ -50,6 +50,7 @@ int aes_hmac_init(unsigned char *key, unsigned char *iv,
 	              EVP_CIPHER_CTX *e_ctx, EVP_CIPHER_CTX *d_ctx,
 	              HMAC_CTX *hmac){
 	// Encrypt + Decrypt 
+	
 	EVP_CIPHER_CTX_init(e_ctx);
 	EVP_EncryptInit_ex(e_ctx, EVP_aes_256_cbc(), NULL, key, iv);
 	EVP_CIPHER_CTX_init(d_ctx);
