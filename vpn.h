@@ -1,3 +1,21 @@
+int checkValidHexString(char *string, int len){
+	int i;
+	for(i=0;i<len;i++){
+		// string's length is less than len.
+		if(string[i] == 0) return 0;
+		
+		// skip to a next character if it's a valid hex character.
+		if(string[i] >= '0' && string[i] <= '9') continue;
+		if(string[i] >= 'a' && string[i] <= 'f') continue;
+		if(string[i] >= 'A' && string[i] <= 'F') continue;
+		
+		// if the string contains non-hex character.
+		return 0;
+	}
+	// return 1 if a string is a valid hex string
+	return 1;
+}
+
 unsigned char* copyBytes(unsigned char *sourceStr, unsigned char *destinationStr, int len){
 	int i;
 	for(i=0;i < len;i++){
