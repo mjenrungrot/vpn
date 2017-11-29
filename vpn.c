@@ -85,6 +85,7 @@ unsigned char iv[32];
 
 int checkValidHexString(char *string, int len);
 unsigned char* copyBytes(unsigned char *sourceStr, unsigned char *destinationStr, int len);
+int hexToInt(unsigned char c);
 unsigned char* printHex(unsigned char *string, int len);
 void sha256hash(char *string, char outputBuffer[65]);
 void generateKeyIV(unsigned char *key, unsigned char *iv);
@@ -159,7 +160,7 @@ int main(int argc, char *argv[]){
 	}
 	
 	// error checking for fcntl
-    if (fcntl(p[0], F_SETFL, O_NONBLOCK) < 0){
+    if (fcntl(pipe_fd[0], F_SETFL, O_NONBLOCK) < 0){
 		perror("error making a pipe non-blocking\n");
         exit(EXIT_FAILURE);
 	}
@@ -611,20 +612,20 @@ int main(int argc, char *argv[]){
 
     while(1) {
 		// If the buffer in the pipe is not empty, do accoridgly.
-		if(read(p[READ], pipeBuffer, PIPE_BUF_SIZE) != -1){
+		if(read(pipe_fd[READ], pipeBuffer, PIPE_BUF_SIZE) != -1){
 			if(!strncmp(pipeBuffer, CHANGE_KEY_COMMAND, 1)){
 				// TODO: Update the key
 				unsigned char newkey[32];
 				size_t idx; 
 				printf("Set new key to ");
 				for(idx=0;idx<32;idx++){
-					newiv[idx] = pipeBuffer[idx+1]; 
-					printf("%02x", newiv[idx]);
+					newkey[idx] = pipeBuffer[idx+1]; 
+					printf("%02x", newkey[idx]);
 				}
 				printf("\n");
-				EVP_EncryptInit_ex(en, NULL, NULL, newkey, NULL);	
-				EVP_DecryptInit_ex(de, NULL, NULL, newkey, NULL);
-				HMAC_Init_ex(hmac, newkey, 32, NULL, NULL);
+				EVP_EncryptInit_ex(&en, NULL, NULL, newkey, NULL);	
+				EVP_DecryptInit_ex(&de, NULL, NULL, newkey, NULL);
+				HMAC_Init_ex(&hmac, newkey, 32, NULL, NULL);
 			}else if(!strncmp(pipeBuffer, CHANGE_IV_COMMAND, 1)){
 				// TODO: Update the iv
 				unsigned char newiv[16];
@@ -635,8 +636,8 @@ int main(int argc, char *argv[]){
 					printf("%02x", newiv[idx]);
 				}
 				printf("\n");
-				EVP_EncryptInit_ex(en, NULL, NULL, NULL, newiv);	
-				EVP_DecryptInit_ex(de, NULL, NULL, NULL, newiv);
+				EVP_EncryptInit_ex(&en, NULL, NULL, NULL, newiv);	
+				EVP_DecryptInit_ex(&de, NULL, NULL, NULL, newiv);
 			}else if(!strncmp(pipeBuffer, BREAK_COMMAND, 1)){
 				// TODO: Break the tunnel
 				printf("This tunnel will break as notified by the child\n");
