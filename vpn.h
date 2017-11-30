@@ -208,6 +208,7 @@ void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *bu
 					EVP_EncryptInit_ex(&en, NULL, NULL, newkey, NULL);	
 					EVP_DecryptInit_ex(&de, NULL, NULL, newkey, NULL);
 					HMAC_Init_ex(&hmac, newkey, 32, NULL, NULL);
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));
 				}else if(!strncmp(pipeBuffer, CHANGE_IV_COMMAND, 1)){
 					unsigned char newiv[16];
 					size_t idx; 
@@ -219,10 +220,10 @@ void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *bu
 					printf("\n");
 					EVP_EncryptInit_ex(&en, NULL, NULL, NULL, newiv);	
 					EVP_DecryptInit_ex(&de, NULL, NULL, NULL, newiv);
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));
 				}else if(!strncmp(pipeBuffer, BREAK_COMMAND, 1)){
 					printf("This tunnel will break as notified by the child\n");
 					memset(pipeBuffer, 0, sizeof(pipeBuffer));
-					if(cliserv == CLIENT) break;
 				}
 			}
 		}
