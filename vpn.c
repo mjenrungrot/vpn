@@ -107,6 +107,7 @@ void DestroySSL();
 void ShutdownSSL();
 
 /****** VPN protocol ***************************************/
+void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *buffer, int cliserv);
 int tun_alloc(char *dev, int flags);
 int cread(int fd, char *buf, int n);
 int cwrite(int fd, char *buf, int n);

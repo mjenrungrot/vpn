@@ -194,6 +194,146 @@ void DestroySSL() {
 
 /****** VPN protocol ***************************************/
 
+void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *buffer, int cliserv) {
+  uint16_t nwrite;
+  uint16_t nread;
+  uint16_t plength;
+  unsigned long int tap2net = 0;
+  unsigned long int net2tap = 0;
+  while(1) {
+		// If the buffer in the pipe is not empty, do accoridgly.
+		if(read(pipe_fd[READ], pipeBuffer, PIPE_BUF_SIZE) != -1){
+			if(!strncmp(pipeBuffer, CHANGE_KEY_COMMAND, 1)){
+				// TODO: Update the key
+				unsigned char newkey[32];
+				size_t idx; 
+				printf("Set new key to ");
+				for(idx=0;idx<32;idx++){
+					newkey[idx] = pipeBuffer[idx+1]; 
+					printf("%02x", newkey[idx]);
+				}
+				printf("\n");
+				EVP_EncryptInit_ex(&en, NULL, NULL, newkey, NULL);	
+				EVP_DecryptInit_ex(&de, NULL, NULL, newkey, NULL);
+				HMAC_Init_ex(&hmac, newkey, 32, NULL, NULL);
+			}else if(!strncmp(pipeBuffer, CHANGE_IV_COMMAND, 1)){
+				// TODO: Update the iv
+				unsigned char newiv[16];
+				size_t idx; 
+				printf("Set new IV to ");
+				for(idx=0;idx<16;idx++){
+					newiv[idx] = pipeBuffer[idx+1]; 
+					printf("%02x", newiv[idx]);
+				}
+				printf("\n");
+				EVP_EncryptInit_ex(&en, NULL, NULL, NULL, newiv);	
+				EVP_DecryptInit_ex(&de, NULL, NULL, NULL, newiv);
+			}else if(!strncmp(pipeBuffer, BREAK_COMMAND, 1)){
+				// TODO: Break the tunnel
+				printf("This tunnel will break as notified by the child\n");
+				break;
+			}
+		}
+		
+        int ret;
+        fd_set rd_set;
+
+        FD_ZERO(&rd_set);
+        FD_SET(tap_fd, &rd_set); 
+        FD_SET(net_fd, &rd_set);
+        ret = select(FD_SETSIZE, &rd_set, NULL, NULL, NULL);
+
+        if (ret < 0 && errno == EINTR){
+            continue;
+        }
+
+        if (ret < 0) {
+            printf("file descriptor = %d\n", (int)ret);
+            perror("select()");
+            exit(1);
+        }
+
+        if(FD_ISSET(tap_fd, &rd_set)){
+            // Read input from the TAP interface            
+            nread = cread(tap_fd, buffer, BUFSIZE);
+            plength = htons(nread);
+            
+            unsigned char *input, *ciphertext;
+            int len = nread;
+            input = malloc(len);
+            copyBytes(buffer, input, nread);
+
+            // Encrypt the input message
+            ciphertext = aes_encrypt(&en, input, &len);
+            do_debug("\tinput = %s [%d]\n", printHex(input, nread), nread );
+            do_debug("\tciphertext = %s[%d]\n",printHex(ciphertext, len), len);
+
+            // Write the header packet and payload of ciphertext
+            plength = htons(len);
+            nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));
+            nwrite = cwrite(net_fd, ciphertext, len);
+            
+            // Write the HMAC for message verificiation
+            len = 84;
+            int tmp_len = 84;
+            unsigned char* hmac_result = gen_hmac(&hmac, input, &tmp_len);
+            nwrite = cwrite(net_fd, hmac_result, len);
+            do_debug("\tinput = %s [%d]\n", printHex(input, 84), 84);
+            do_debug("\tHMAC = %s [%d]\n", printHex(hmac_result, len), len);
+                        
+            tap2net++;
+            if(cliserv == CLIENT){
+                do_debug("TAP2NET %lu: This is sending from TUN [CLIENT] to tunnel Read [%d] Write [%d]\n", tap2net, nread, nwrite);
+            }else{
+                do_debug("TAP2NET %lu: This is sending from TUN [SERVER] to tunnel Read [%d] Write [%d]\n", tap2net, nread, nwrite);
+            }
+        }
+        if(FD_ISSET(net_fd, &rd_set)){
+            /* data from the network: read it, and write it to the tun/tap interface. 
+            * We need to read the length first, and then the packet */
+            
+            // Read the header packet
+            nread = read_n(net_fd, (char *)&plength, sizeof(plength));
+            int len = ntohs(plength);
+
+            // Read the payload containing encrypted message
+            nread = read_n(net_fd, buffer, len);  
+            
+            // Decrypt the message
+            char *decryptedText = (char *)aes_decrypt(&de, buffer, &len);
+            int lenDecryptedText = len;
+            do_debug("\tciphertext = %s[%d]\n", printHex(buffer, len), len);
+            do_debug("\tdecryptedText = %s[%d]\n", printHex(decryptedText, len), len);
+            
+            // Read the HMAC for message verification
+            read_n(net_fd, buffer, 32);
+            unsigned char *obtained_hmac = buffer;
+            
+            // Calculate the HMAC from the received message
+            unsigned char *generated_hmac;
+            generated_hmac = gen_hmac(&hmac, decryptedText, &len);
+            do_debug("\thmac           = %s\n", printHex(buffer, 32));
+            do_debug("\tgenerated HMAC = %s [%d]\n", printHex(generated_hmac, len), len);
+            
+            // Check two HMACs
+            if(!check_hmac(obtained_hmac, generated_hmac, (unsigned int)32)){
+                perror("HMAC checking failed");
+                exit(EXIT_FAILURE);
+            }
+            
+            // Redirect output to the TAP interface
+            nwrite = cwrite(tap_fd, decryptedText, lenDecryptedText);
+            
+            net2tap++;
+            if(cliserv == CLIENT){
+                do_debug("NET2TAP %lu: Received packets from TUNNEL to [CLIENT] Read [%d] Write [%d]\n", net2tap, nread, nwrite);
+            }else{
+                do_debug("NET2TAP %lu: Received packets from TUNNEL to [SERVER] Read [%d] Write [%d]\n", net2tap, nread, nwrite);
+            }
+        }
+    }
+}
+
 
 /**************************************************************************
  * tun_alloc: allocates or reconnects to a tun/tap device. The caller     *
