@@ -201,39 +201,9 @@ void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *bu
   unsigned long int tap2net = 0;
   unsigned long int net2tap = 0;
   while(1) {
-		// If the buffer in the pipe is not empty, do accoridgly.
-		if(read(pipe_fd[READ], pipeBuffer, PIPE_BUF_SIZE) != -1){
-			if(!strncmp(pipeBuffer, CHANGE_KEY_COMMAND, 1)){
-				// TODO: Update the key
-				unsigned char newkey[32];
-				size_t idx; 
-				printf("Set new key to ");
-				for(idx=0;idx<32;idx++){
-					newkey[idx] = pipeBuffer[idx+1]; 
-					printf("%02x", newkey[idx]);
-				}
-				printf("\n");
-				EVP_EncryptInit_ex(&en, NULL, NULL, newkey, NULL);	
-				EVP_DecryptInit_ex(&de, NULL, NULL, newkey, NULL);
-				HMAC_Init_ex(&hmac, newkey, 32, NULL, NULL);
-			}else if(!strncmp(pipeBuffer, CHANGE_IV_COMMAND, 1)){
-				// TODO: Update the iv
-				unsigned char newiv[16];
-				size_t idx; 
-				printf("Set new IV to ");
-				for(idx=0;idx<16;idx++){
-					newiv[idx] = pipeBuffer[idx+1]; 
-					printf("%02x", newiv[idx]);
-				}
-				printf("\n");
-				EVP_EncryptInit_ex(&en, NULL, NULL, NULL, newiv);	
-				EVP_DecryptInit_ex(&de, NULL, NULL, NULL, newiv);
-			}else if(!strncmp(pipeBuffer, BREAK_COMMAND, 1)){
-				// TODO: Break the tunnel
-				printf("This tunnel will break as notified by the child\n");
-				break;
-			}
-		}
+		
+		printf("empty pipe buffer\n");
+		
 		
         int ret;
         fd_set rd_set;
@@ -241,8 +211,10 @@ void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *bu
         FD_ZERO(&rd_set);
         FD_SET(tap_fd, &rd_set); 
         FD_SET(net_fd, &rd_set);
+        FD_SET(pipe_fd[READ], &rd_set);
         ret = select(FD_SETSIZE, &rd_set, NULL, NULL, NULL);
 
+			printf("Blocking case3\n");
         if (ret < 0 && errno == EINTR){
             continue;
         }
@@ -252,6 +224,42 @@ void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *bu
             perror("select()");
             exit(1);
         }
+        
+        if(FD_ISSET(pipe_fd[READ], &rd_set)){
+			// If the buffer in the pipe is not empty, do accoridgly.
+			if(read(pipe_fd[READ], pipeBuffer, PIPE_BUF_SIZE) != -1){
+				if(!strncmp(pipeBuffer, CHANGE_KEY_COMMAND, 1)){
+					// TODO: Update the key
+					unsigned char newkey[32];
+					size_t idx; 
+					printf("Set new key to ");
+					for(idx=0;idx<32;idx++){
+						newkey[idx] = pipeBuffer[idx+1]; 
+						printf("%02x", newkey[idx]);
+					}
+					printf("\n");
+					EVP_EncryptInit_ex(&en, NULL, NULL, newkey, NULL);	
+					EVP_DecryptInit_ex(&de, NULL, NULL, newkey, NULL);
+					HMAC_Init_ex(&hmac, newkey, 32, NULL, NULL);
+				}else if(!strncmp(pipeBuffer, CHANGE_IV_COMMAND, 1)){
+					// TODO: Update the iv
+					unsigned char newiv[16];
+					size_t idx; 
+					printf("Set new IV to ");
+					for(idx=0;idx<16;idx++){
+						newiv[idx] = pipeBuffer[idx+1]; 
+						printf("%02x", newiv[idx]);
+					}
+					printf("\n");
+					EVP_EncryptInit_ex(&en, NULL, NULL, NULL, newiv);	
+					EVP_DecryptInit_ex(&de, NULL, NULL, NULL, newiv);
+				}else if(!strncmp(pipeBuffer, BREAK_COMMAND, 1)){
+					// TODO: Break the tunnel
+					printf("This tunnel will break as notified by the child\n");
+					break;
+				}
+			}
+		}
 
         if(FD_ISSET(tap_fd, &rd_set)){
             // Read input from the TAP interface            
