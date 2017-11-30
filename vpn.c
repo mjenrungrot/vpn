@@ -253,28 +253,6 @@ int main(int argc, char *argv[]){
   
     /* CLIENT: */
     if(cliserv==CLIENT){
-        /*************** VPN's UDP Connection **************/
-		
-		// assign the destination address 
-		memset(&remote, 0, sizeof(remote));
-		remote.sin_family = AF_INET;
-		remote.sin_addr.s_addr = inet_addr(remote_ip);
-		remote.sin_port = htons(port);
-
-		// connection request 
-		char *hello = "hello";
-		if (sendto(sock_fd, hello, strlen(hello), 0, (struct sockaddr*) &remote, sizeof(remote)) < 0){
-			perror("sendto()");
-			exit(EXIT_FAILURE);
-		}
-		
-		// Connect to the server using UDP connection 
-		if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
-			perror("connect() - UDP");
-			exit(EXIT_FAILURE);
-		}
-		do_debug("Client: Finish UDP Connection\n");
-		net_fd = sock_fd;
 		
 		/*************** SSL's TCP Connection **************/
 
@@ -288,7 +266,30 @@ int main(int argc, char *argv[]){
 			perror("connect() - TCP");
 			exit(EXIT_FAILURE);
 		}
-		do_debug("Client: finish connect()\n");
+		do_debug("Client: finish TCP connect()\n");
+		
+		/*************** VPN's UDP Connection **************/
+		
+		// assign the destination address 
+		memset(&remote, 0, sizeof(remote));
+		remote.sin_family = AF_INET;
+		remote.sin_addr.s_addr = inet_addr(remote_ip);
+		remote.sin_port = htons(port);
+
+		// connection request 
+		//char *hello = "hello";
+		//if (sendto(sock_fd, hello, strlen(hello), 0, (struct sockaddr*) &remote, sizeof(remote)) < 0){
+		//	perror("sendto()");
+		//	exit(EXIT_FAILURE);
+		//}
+		
+		// Connect to the server using UDP connection 
+		if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
+			perror("connect() - UDP");
+			exit(EXIT_FAILURE);
+		}
+		do_debug("Client: Finish UDP Connection\n");
+		net_fd = sock_fd;
 
 		/* Start initializing TLS Connection */
 		InitializeSSL();
@@ -437,227 +438,269 @@ int main(int argc, char *argv[]){
 					// write to pipe
 					printf("write %s [%d] to the pipe\n", pipeBuffer, currentBufferLength); 
 					write(pipe_fd[WRITE], pipeBuffer, currentBufferLength);
+					
+					break;
 				}
-				do_debug("buffer is = [%s]\n",commandBuffer);
 			}
+			return 0;
 		}
-		processVPN(pipe_fd, pipeBuffer, tap_fd, net_fd, buffer, cliserv);
 		close(pipe_fd[WRITE]);
-	
+		processVPN(pipe_fd, pipeBuffer, tap_fd, net_fd, buffer, cliserv);
+		do_debug("Start cleaning\n");
+		//HMAC_CTX_cleanup(&hmac);
+		do_debug("Clean HMAC successfully\n");
+		//EVP_CIPHER_CTX_free(&en);
+		do_debug("Clean en successfully\n");
+		//EVP_CIPHER_CTX_free(&de);
+		do_debug("Clean de successfully\n");
+		//SSL_free (ssl);
+		do_debug("Clean ssl successfully\n");
+		//SSL_CTX_free (ctx);
+		do_debug("Clean ctx successfully\n");
     /* SERVER: */
     } else {
-        // Server, wait for connections 
-
-        /*************** VPN's UDP Connection **************/
-        // avoid EADDRINUSE error on bind()  
-        if(setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval)) < 0){
-            perror("setsockopt() - UDP");
-            exit(EXIT_FAILURE);
-        }
-    
-        memset(&local, 0, sizeof(local));
-        local.sin_family = AF_INET;
-        local.sin_addr.s_addr = htonl(INADDR_ANY);
-        local.sin_port = htons(port);
-		if (bind(sock_fd, (struct sockaddr*) &local, sizeof(local)) < 0){
-            perror("bind() - UDP");
-            exit(EXIT_FAILURE);
-        }
-        do_debug("Server: Finish bind()\n");
-        
-        // wait for connection request 
-        remotelen = sizeof(remote);
-        memset(&remote, 0, remotelen);
-        int len;
-        if ((len = recvfrom(sock_fd, buffer, BUFSIZE, 0, (struct sockaddr*)&remote, &remotelen)) < 0){
-            perror("recvfrom() - UDP");
-            exit(EXIT_FAILURE);
-        }
-        do_debug("Server: Finish recvfrom()\n");
-        
-        // Connect to the client using UDP connection 
-        if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
-            perror("connect() - UDP");
-            exit(EXIT_FAILURE);
-        }
-        net_fd = sock_fd;
-        
-        do_debug("Server: Finish UDP connection\n");
-
-        /*************** SSL's TCP Connection **************/
-        
+		// Server, wait for connections 
         /* Connect to the client using TCP connection */
-        if(setsockopt(sock_TCP_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval)) < 0){
-            perror("setsockopt() - TCP");
-            exit(EXIT_FAILURE);
-        }
-        do_debug("Server: Finish setsockopt() - TCP\n");
-        memset(&local, 0, sizeof(local));
-        local.sin_family = AF_INET;
-        local.sin_addr.s_addr = htonl(INADDR_ANY);
-        local.sin_port = htons(port);
-        if(bind(sock_TCP_fd, (struct sockaddr*)&local, sizeof(local)) < 0){
-            perror("Server: bind() - TCP");
-            exit(EXIT_FAILURE);
-        }
-        do_debug("Server: Finish bind() - TCP\n");
-        if(listen(sock_TCP_fd, 5) < 0){
-            perror("Server: listen() - TCP");
-            exit(EXIT_FAILURE);
-        }
-        do_debug("Server: Finish listen() - TCP\n");
-        remotelen = sizeof(remote);
-        memset(&remote, 0, remotelen);
-        if((sock_TCP_fd = accept(sock_TCP_fd, (struct sockaddr*)&remote, &remotelen)) < 0){
-            perror("Server: accept() - TCP");
-            exit(EXIT_FAILURE);
-        }
-        do_debug("Server: Finish accept() - TCP\n");
-	
-        /* SSL context initialization */
-        InitializeSSL();
-        do_debug("Server: Finish InitializeSSL()\n");
-        meth = (SSL_METHOD *)SSLv23_server_method();
-        do_debug("Server: Finish creating SSL_METHOD\n");
-        ctx = SSL_CTX_new(meth);
-        do_debug("Server: Finish creating SSL_CTX\n");
-        
-        if(ctx == NULL){
-            perror("Create CTX error for Server");
-            exit(EXIT_FAILURE);
-        }
-        
-        /* Load certificates for CA */
-        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-        SSL_CTX_load_verify_locations(ctx, CERTF_CA, NULL);
-        do_debug("Server: Finish loading certificates for CA\n");
-        
-        /* Load certificates for Server */
-        if(SSL_CTX_use_certificate_file(ctx, CERTF_SERVER, SSL_FILETYPE_PEM) <= 0){
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
-        do_debug("Server: Finish loading certificates for Server\n");
-        if(SSL_CTX_use_PrivateKey_file(ctx, KEYF_SERVER, SSL_FILETYPE_PEM) <= 0){
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
-        do_debug("Server: Finish loading private key for Server\n");
-        if(!SSL_CTX_check_private_key(ctx)){
-            perror("Private key doesn't match the certificate public key");
-            exit(EXIT_FAILURE);
-        }
-        
-        // Create a new SSL structure for a connection
-        if((ssl = SSL_new(ctx)) == NULL){
-            perror("Error with making SSL connection from Server");
-            exit(EXIT_FAILURE);
-        }
-        SSL_set_fd(ssl, sock_TCP_fd);
-        if(SSL_accept(ssl) == -1){
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
-        
-        /* Get the cipher */
-        do_debug("SERVER: SSL Connection using %s\n", SSL_get_cipher(ssl));
-        
-        /* Get client's certificate */
-        if((client_cert = SSL_get_peer_certificate(ssl)) == NULL){
-            perror("Can't get client's certificate");
-            exit(EXIT_FAILURE);
-        }
-        
-        char *certificateBuffer;
-        certificateBuffer = X509_NAME_oneline(X509_get_subject_name(client_cert), 0, 0);
-        if(certificateBuffer == NULL){
-            perror("Can't get the subject from the client's certificate");
-            exit(EXIT_FAILURE);
-        }
-        OPENSSL_free(certificateBuffer);
-        
-        certificateBuffer = X509_NAME_oneline(X509_get_issuer_name(client_cert), 0, 0);
-        if(certificateBuffer == NULL){
-            perror("Can't get the issuer from the client's certificate");
-            exit(EXIT_FAILURE);
-        }
-        OPENSSL_free(certificateBuffer);
-        
-        /* Deallocating the certificate */
-        X509_free(client_cert);
-        
-        do_debug("SERVER: SSL Connection from client %s is sucessful\n", inet_ntoa(remote.sin_addr));
-
-		SSL_read(ssl, key, 32);
-        do_debug("SERVER: Read key to server\n");
-        do_debug("%s\n", printHex(key, 32));
-        
-		SSL_read(ssl, iv, 16);
-        do_debug("SERVER: Read iv to server\n");
-        do_debug("%s\n", printHex(iv, 16));
-        
-        // Initialize AES + HMAC with the client's session key and IV
-        aes_hmac_init(key, iv, &en, &de, &hmac);
-        
-        if(fork() == 0){
-			close(pipe_fd[READ]);
-			// Keep reading command sending over SSL 
-			while(1){
-				SSL_read(ssl, commandBuffer, 1);
-				if(!strncmp(commandBuffer, CHANGE_KEY_COMMAND, 1)){
-					memset(argumentBuffer, 0, sizeof(argumentBuffer));
-					SSL_read(ssl, argumentBuffer, 64);
-					
-					size_t currentBufferLength = 0;
-					size_t idx;
-					memset(pipeBuffer, 0, sizeof(pipeBuffer));
-					
-					strncpy(pipeBuffer, CHANGE_KEY_COMMAND, 1);
-					currentBufferLength++;
-					for(idx=0;idx<64;idx+=2){
-					    pipeBuffer[currentBufferLength] = hexToInt(argumentBuffer[idx]) << 4 | hexToInt(argumentBuffer[idx+1]);
-					    currentBufferLength++;
-					}
-					
-					// write to pipe
-					write(pipe_fd[WRITE], pipeBuffer, currentBufferLength);
-					
-					do_debug("The server will set a new key to %s\n", argumentBuffer);
-				}else if(!strncmp(commandBuffer, CHANGE_IV_COMMAND, 1)){
-					memset(argumentBuffer, 0, sizeof(argumentBuffer));
-					SSL_read(ssl, argumentBuffer, 32);
-					
-					size_t currentBufferLength = 0;
-					size_t idx;
-					memset(pipeBuffer, 0, sizeof(pipeBuffer));
-					
-					strncpy(pipeBuffer, CHANGE_IV_COMMAND, 1);
-					currentBufferLength++;
-					for(idx=0;idx<32;idx+=2){
-					    pipeBuffer[currentBufferLength] = hexToInt(argumentBuffer[idx]) << 4 | hexToInt(argumentBuffer[idx+1]);
-					    currentBufferLength++;
-					}
-					
-					// write to pipe
-					write(pipe_fd[WRITE], pipeBuffer, currentBufferLength);
-					
-					do_debug("The server will set a new iv to %s\n", argumentBuffer);
-				}else if(!strncmp(commandBuffer, BREAK_COMMAND, 1)){
-					do_debug("The server will break the tunnel\n");
-					
-					size_t currentBufferLength = 0;
-					memset(pipeBuffer, 0, sizeof(pipeBuffer));	
-					strncpy(pipeBuffer, BREAK_COMMAND, 1);
-					currentBufferLength++;
-					
-					// write to pipe
-					write(pipe_fd[WRITE], pipeBuffer, currentBufferLength);
-				}
-				do_debug("buffer is = [%s]\n",commandBuffer);
-			}
+		if(setsockopt(sock_TCP_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval)) < 0){
+			perror("setsockopt() - TCP");
+			exit(EXIT_FAILURE);
 		}
-		close(pipe_fd[WRITE]);
-		processVPN(pipe_fd, pipeBuffer, tap_fd, net_fd, buffer, cliserv);
+		do_debug("Server: Finish setsockopt() - TCP\n");
+		memset(&local, 0, sizeof(local));
+		local.sin_family = AF_INET;
+		local.sin_addr.s_addr = htonl(INADDR_ANY);
+		local.sin_port = htons(port);
+		if(bind(sock_TCP_fd, (struct sockaddr*)&local, sizeof(local)) < 0){
+			perror("Server: bind() - TCP");
+			exit(EXIT_FAILURE);
+		}
+		do_debug("Server: Finish bind() - TCP\n");
+		if(listen(sock_TCP_fd, 5) < 0){
+			perror("Server: listen() - TCP");
+			exit(EXIT_FAILURE);
+		}
+		do_debug("Server: Finish listen() - TCP\n");
+		
+		memset(&local, 0, sizeof(local));
+		local.sin_family = AF_INET;
+		local.sin_addr.s_addr = htonl(INADDR_ANY);
+		local.sin_port = htons(port);
+		if (bind(sock_fd, (struct sockaddr*) &local, sizeof(local)) < 0){
+			perror("bind() - UDP");
+			exit(EXIT_FAILURE);
+		}
+		do_debug("Server: Finish bind() - UDP\n");
+		
+		while(1){
+			/*************** SSL's TCP Connection **************/
+        
+			
+			remotelen = sizeof(remote);
+			memset(&remote, 0, remotelen);
+			int new_sock_TCP;
+			if((new_sock_TCP = accept(sock_TCP_fd, (struct sockaddr*)&remote, &remotelen)) < 0){
+				perror("Server: accept() - TCP");
+				exit(EXIT_FAILURE);
+			}
+			do_debug("Server: Finish accept() - TCP\n");
+			
+			printf("received from %s\n", inet_ntoa(remote.sin_addr));
+			
+			/*************** END: SSL's TCP Connection **************/
+			// child process
+			if(fork() == 0){
+				close(sock_TCP_fd);
+				sock_TCP_fd = new_sock_TCP; // the child process operate on the created socket
+				
+				
+				/*************** VPN's UDP Connection **************/
+				// avoid EADDRINUSE error on bind()  
+				if(setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval)) < 0){
+					perror("setsockopt() - UDP");
+					exit(EXIT_FAILURE);
+				}
+				
+				// wait for connection request 
+				/*remotelen = sizeof(remote);
+				memset(&remote, 0, remotelen);
+				int len;
+				if ((len = recvfrom(sock_fd, buffer, BUFSIZE, 0, (struct sockaddr*)&remote, &remotelen)) < 0){
+					perror("recvfrom() - UDP");
+					exit(EXIT_FAILURE);
+				}
+				do_debug("Server: Finish recvfrom()\n");*/
+				
+				// Connect to the client using UDP connection 
+				if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
+					perror("connect() - UDP");
+					exit(EXIT_FAILURE);
+				}
+				net_fd = sock_fd;
+				
+				do_debug("Server: Finish UDP connection\n");
+			
+				/* SSL context initialization */
+				InitializeSSL();
+				do_debug("Server: Finish InitializeSSL()\n");
+				meth = (SSL_METHOD *)SSLv23_server_method();
+				do_debug("Server: Finish creating SSL_METHOD\n");
+				ctx = SSL_CTX_new(meth);
+				do_debug("Server: Finish creating SSL_CTX\n");
+				
+				if(ctx == NULL){
+					perror("Create CTX error for Server");
+					exit(EXIT_FAILURE);
+				}
+				
+				/* Load certificates for CA */
+				SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+				SSL_CTX_load_verify_locations(ctx, CERTF_CA, NULL);
+				do_debug("Server: Finish loading certificates for CA\n");
+				
+				/* Load certificates for Server */
+				if(SSL_CTX_use_certificate_file(ctx, CERTF_SERVER, SSL_FILETYPE_PEM) <= 0){
+					ERR_print_errors_fp(stderr);
+					exit(EXIT_FAILURE);
+				}
+				do_debug("Server: Finish loading certificates for Server\n");
+				if(SSL_CTX_use_PrivateKey_file(ctx, KEYF_SERVER, SSL_FILETYPE_PEM) <= 0){
+					ERR_print_errors_fp(stderr);
+					exit(EXIT_FAILURE);
+				}
+				do_debug("Server: Finish loading private key for Server\n");
+				if(!SSL_CTX_check_private_key(ctx)){
+					perror("Private key doesn't match the certificate public key");
+					exit(EXIT_FAILURE);
+				}
+				
+				// Create a new SSL structure for a connection
+				if((ssl = SSL_new(ctx)) == NULL){
+					perror("Error with making SSL connection from Server");
+					exit(EXIT_FAILURE);
+				}
+				SSL_set_fd(ssl, sock_TCP_fd);
+				if(SSL_accept(ssl) == -1){
+					ERR_print_errors_fp(stderr);
+					exit(EXIT_FAILURE);
+				}
+				
+				/* Get the cipher */
+				do_debug("SERVER: SSL Connection using %s\n", SSL_get_cipher(ssl));
+				
+				/* Get client's certificate */
+				if((client_cert = SSL_get_peer_certificate(ssl)) == NULL){
+					perror("Can't get client's certificate");
+					exit(EXIT_FAILURE);
+				}
+				
+				char *certificateBuffer;
+				certificateBuffer = X509_NAME_oneline(X509_get_subject_name(client_cert), 0, 0);
+				if(certificateBuffer == NULL){
+					perror("Can't get the subject from the client's certificate");
+					exit(EXIT_FAILURE);
+				}
+				OPENSSL_free(certificateBuffer);
+				
+				certificateBuffer = X509_NAME_oneline(X509_get_issuer_name(client_cert), 0, 0);
+				if(certificateBuffer == NULL){
+					perror("Can't get the issuer from the client's certificate");
+					exit(EXIT_FAILURE);
+				}
+				OPENSSL_free(certificateBuffer);
+				
+				/* Deallocating the certificate */
+				X509_free(client_cert);
+				
+				do_debug("SERVER: SSL Connection from client %s is sucessful\n", inet_ntoa(remote.sin_addr));
+
+				SSL_read(ssl, key, 32);
+				do_debug("SERVER: Read key to server\n");
+				do_debug("%s\n", printHex(key, 32));
+				
+				SSL_read(ssl, iv, 16);
+				do_debug("SERVER: Read iv to server\n");
+				do_debug("%s\n", printHex(iv, 16));
+				
+				// Initialize AES + HMAC with the client's session key and IV
+				aes_hmac_init(key, iv, &en, &de, &hmac);
+				
+				if(fork() == 0){
+					close(pipe_fd[READ]);
+					// Keep reading command sending over SSL 
+					while(1){
+						SSL_read(ssl, commandBuffer, 1);
+						if(!strncmp(commandBuffer, CHANGE_KEY_COMMAND, 1)){
+							memset(argumentBuffer, 0, sizeof(argumentBuffer));
+							SSL_read(ssl, argumentBuffer, 64);
+							
+							size_t currentBufferLength = 0;
+							size_t idx;
+							memset(pipeBuffer, 0, sizeof(pipeBuffer));
+							
+							strncpy(pipeBuffer, CHANGE_KEY_COMMAND, 1);
+							currentBufferLength++;
+							for(idx=0;idx<64;idx+=2){
+								pipeBuffer[currentBufferLength] = hexToInt(argumentBuffer[idx]) << 4 | hexToInt(argumentBuffer[idx+1]);
+								currentBufferLength++;
+							}
+							
+							// write to pipe
+							write(pipe_fd[WRITE], pipeBuffer, currentBufferLength);
+							
+							do_debug("The server will set a new key to %s\n", argumentBuffer);
+						}else if(!strncmp(commandBuffer, CHANGE_IV_COMMAND, 1)){
+							memset(argumentBuffer, 0, sizeof(argumentBuffer));
+							SSL_read(ssl, argumentBuffer, 32);
+							
+							size_t currentBufferLength = 0;
+							size_t idx;
+							memset(pipeBuffer, 0, sizeof(pipeBuffer));
+							
+							strncpy(pipeBuffer, CHANGE_IV_COMMAND, 1);
+							currentBufferLength++;
+							for(idx=0;idx<32;idx+=2){
+								pipeBuffer[currentBufferLength] = hexToInt(argumentBuffer[idx]) << 4 | hexToInt(argumentBuffer[idx+1]);
+								currentBufferLength++;
+							}
+							
+							// write to pipe
+							write(pipe_fd[WRITE], pipeBuffer, currentBufferLength);
+							
+							do_debug("The server will set a new iv to %s\n", argumentBuffer);
+						}else if(!strncmp(commandBuffer, BREAK_COMMAND, 1)){
+							do_debug("The server will break the tunnel\n");
+							
+							size_t currentBufferLength = 0;
+							memset(pipeBuffer, 0, sizeof(pipeBuffer));	
+							strncpy(pipeBuffer, BREAK_COMMAND, 1);
+							currentBufferLength++;
+							
+							// write to pipe
+							write(pipe_fd[WRITE], pipeBuffer, currentBufferLength);
+						}
+					}
+				}
+				close(pipe_fd[WRITE]);
+				processVPN(pipe_fd, pipeBuffer, tap_fd, net_fd, buffer, cliserv);
+				
+				do_debug("Start cleaning\n");
+				//HMAC_CTX_cleanup(&hmac);
+				do_debug("Clean HMAC successfully\n");
+				//EVP_CIPHER_CTX_free(&en);
+				do_debug("Clean en successfully\n");
+				//EVP_CIPHER_CTX_free(&de);
+				do_debug("Clean de successfully\n");
+				//SSL_free (ssl);
+				do_debug("Clean ssl successfully\n");
+				//SSL_CTX_free (ctx);
+				do_debug("Clean ctx successfully\n");
+				
+				
+				close(new_sock_TCP);
+				exit(EXIT_SUCCESS);
+			}
+			close(new_sock_TCP);
+		}
     }
     return 0;
 }
