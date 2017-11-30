@@ -221,6 +221,7 @@ void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *bu
 					EVP_DecryptInit_ex(&de, NULL, NULL, NULL, newiv);
 				}else if(!strncmp(pipeBuffer, BREAK_COMMAND, 1)){
 					printf("This tunnel will break as notified by the child\n");
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));
 					if(cliserv == CLIENT) break;
 				}
 			}
