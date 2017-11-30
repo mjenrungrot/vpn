@@ -33,42 +33,10 @@ unsigned char* printHex(unsigned char *string, int len){
 }
 
 int hexToInt(unsigned char c) {
-  switch(c) {
-    case '0':
-      return 0;
-    case '1':
-      return 1;
-    case '2':
-      return 2;
-    case '3':
-      return 3;
-    case '4':
-      return 4;
-    case '5':
-      return 5;
-    case '6':
-      return 6;
-    case '7':
-      return 7;
-    case '8':
-      return 8;
-    case '9':
-      return 9;
-    case 'a':
-      return 10;
-    case 'b':
-      return 11;
-    case 'c':
-      return 12;
-    case 'd':
-      return 13;
-    case 'e':
-      return 14;
-    case 'f':
-      return 15;
-    default:
-      return 16;
-  }
+    if(c >= '0' && c <= '9') return c - '0';
+	if(c >= 'A' && c <= 'F') return c - 'A' + 10;
+	if(c >= 'a' && c <= 'f') return c - 'a' + 10;
+	return 16;
 }
 
 /**************************************************************************
@@ -229,7 +197,6 @@ void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *bu
 			// If the buffer in the pipe is not empty, do accoridgly.
 			if(read(pipe_fd[READ], pipeBuffer, PIPE_BUF_SIZE) != -1){
 				if(!strncmp(pipeBuffer, CHANGE_KEY_COMMAND, 1)){
-					// TODO: Update the key
 					unsigned char newkey[32];
 					size_t idx; 
 					printf("Set new key to ");
@@ -241,8 +208,8 @@ void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *bu
 					EVP_EncryptInit_ex(&en, NULL, NULL, newkey, NULL);	
 					EVP_DecryptInit_ex(&de, NULL, NULL, newkey, NULL);
 					HMAC_Init_ex(&hmac, newkey, 32, NULL, NULL);
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));
 				}else if(!strncmp(pipeBuffer, CHANGE_IV_COMMAND, 1)){
-					// TODO: Update the iv
 					unsigned char newiv[16];
 					size_t idx; 
 					printf("Set new IV to ");
@@ -253,9 +220,10 @@ void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *bu
 					printf("\n");
 					EVP_EncryptInit_ex(&en, NULL, NULL, NULL, newiv);	
 					EVP_DecryptInit_ex(&de, NULL, NULL, NULL, newiv);
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));
 				}else if(!strncmp(pipeBuffer, BREAK_COMMAND, 1)){
-					// TODO: Break the tunnel
 					printf("This tunnel will break as notified by the child\n");
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));
 					break;
 				}
 			}
