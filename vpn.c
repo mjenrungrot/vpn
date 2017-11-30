@@ -630,6 +630,7 @@ int main(int argc, char *argv[]){
 					while(1){
 						SSL_read(ssl, commandBuffer, 1);
 						if(!strncmp(commandBuffer, CHANGE_KEY_COMMAND, 1)){
+							memset(commandBuffer, 0, sizeof(commandBuffer));
 							memset(argumentBuffer, 0, sizeof(argumentBuffer));
 							SSL_read(ssl, argumentBuffer, 64);
 							
@@ -649,6 +650,7 @@ int main(int argc, char *argv[]){
 							
 							do_debug("The server will set a new key to %s\n", argumentBuffer);
 						}else if(!strncmp(commandBuffer, CHANGE_IV_COMMAND, 1)){
+							memset(commandBuffer, 0, sizeof(commandBuffer));
 							memset(argumentBuffer, 0, sizeof(argumentBuffer));
 							SSL_read(ssl, argumentBuffer, 32);
 							
@@ -668,6 +670,7 @@ int main(int argc, char *argv[]){
 							
 							do_debug("The server will set a new iv to %s\n", argumentBuffer);
 						}else if(!strncmp(commandBuffer, BREAK_COMMAND, 1)){
+							memset(commandBuffer, 0, sizeof(commandBuffer));
 							do_debug("The server will break the tunnel\n");
 							
 							size_t currentBufferLength = 0;
