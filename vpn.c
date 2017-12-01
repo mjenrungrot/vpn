@@ -244,7 +244,7 @@ int main(int argc, char *argv[]){
 		}
 		/* Create a socket for SSL's TCP control channel */
 		if( (sock_TCP_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0){
-			perror("socker() - SSL's TCP");
+			perror("socket() - SSL's TCP");
 			exit(EXIT_FAILURE);
 		}
 		do_debug("Successfully create a TCP socket\n");
@@ -267,6 +267,7 @@ int main(int argc, char *argv[]){
 			exit(EXIT_FAILURE);
 		}
 		do_debug("Successfully connect TCP protocol\n");
+		sleep(1);
 		
 		/* Connect to the server using UDP connection*/
 		memset(&remote, 0, sizeof(remote));
@@ -282,7 +283,7 @@ int main(int argc, char *argv[]){
 			perror("connect() - UDP");
 			exit(EXIT_FAILURE);
 		}
-		do_debug("Client: Finish UDP Connection\n");
+		do_debug("Successfully connect UDP protocol\n");
 		
 		/* Set the file descriptor */
 		net_fd = sock_fd;
@@ -355,12 +356,9 @@ int main(int argc, char *argv[]){
 		/* Deallocating the certificate */
 		X509_free(server_cert);
 		
-		do_debug("CLIENT: SSL Connection to server %s is sucessful\n", inet_ntoa(remote.sin_addr));
 		generateKeyIV(key, iv);
-		do_debug("CLIENT: Finish generating KEY + IV\n");
 		
 		aes_hmac_init(key, iv, &en, &de, &hmac);
-		do_debug("CLINET: Finish aes_hmac_init\n");
 		
 		SSL_write(ssl, key, 32);
 		do_debug("CLIENT: Send key to server\n");
