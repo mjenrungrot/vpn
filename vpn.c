@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <signal.h>
 
 /* OpenSSL for AES-256 algorithm */
 #include <openssl/evp.h>
@@ -107,7 +108,6 @@ void DestroySSL();
 void ShutdownSSL();
 
 /****** VPN protocol ***************************************/
-void processVPN(int *pipe_fd, char *pipeBuffer, int tap_fd, int net_fd, char *buffer, int cliserv);
 int tun_alloc(char *dev, int flags);
 int cread(int fd, char *buf, int n);
 int cwrite(int fd, char *buf, int n);
@@ -132,6 +132,7 @@ void usage(void) {
     fprintf(stderr, "-h: prints this help text\n");
     exit(1);
 }
+#define MAX_NUM_CLIENTS 30
 
 int main(int argc, char *argv[]){
     int tap_fd, option;
@@ -153,18 +154,11 @@ int main(int argc, char *argv[]){
     SSL_CTX* ctx;
     SSL_METHOD* meth;
     X509 *server_cert, *client_cert; // Certificates
+    int pipe_fd[2];
 
-	int pipe_fd[2];
-	if(pipe(pipe_fd) < 0){
-		perror("error creating unnamed pipe\n");
-		exit(EXIT_FAILURE);
-	}
 	
-	// error checking for fcntl
-    if (fcntl(pipe_fd[0], F_SETFL, O_NONBLOCK) < 0){
-		perror("error making a pipe non-blocking\n");
-        exit(EXIT_FAILURE);
-	}
+	int client_socket[MAX_NUM_CLIENTS];
+	
 
     progname = argv[0];
   
@@ -237,29 +231,45 @@ int main(int argc, char *argv[]){
     }
     do_debug("Successfully connected to interface %s\n", if_name);
 
-    /* Create a socket for VPN's UDP connection */
-    if ( (sock_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-        perror("socket() - VPN's UDP");
-        exit(EXIT_FAILURE);
-    }
-    do_debug("Successfully create a UDP socket\n");
-
-    /* Create a socket for SSL's TCP control channel */
-    if( (sock_TCP_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0){
-        perror("socker() - SSL's TCP");
-        exit(EXIT_FAILURE);
-    }
-    do_debug("Successfully create a TCP socket\n");
-  
+   
+	signal(SIGCHLD, SIG_IGN);
+		
     /* CLIENT: */
     if(cliserv==CLIENT){
 		
-		/*************** SSL's TCP Connection **************/
+		if(pipe(pipe_fd) < 0){
+			perror("error creating unnamed pipe\n");
+			exit(EXIT_FAILURE);
+		}
+		
+		// error checking for fcntl
+		if (fcntl(pipe_fd[0], F_SETFL, O_NONBLOCK) < 0){
+			perror("error making a pipe non-blocking\n");
+			exit(EXIT_FAILURE);
+		}
+		/* Create a socket for SSL's TCP control channel */
+		if( (sock_TCP_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0){
+			perror("socker() - SSL's TCP");
+			exit(EXIT_FAILURE);
+		}
+		do_debug("Successfully create a TCP socket\n");
+		
+		/* Create a socket for VPN's UDP connection */
+		if ( (sock_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+			perror("socket() - VPN's UDP");
+			exit(EXIT_FAILURE);
+		}
+		
+		do_debug("Successfully create a UDP socket\n");
+		
+		printf("\t\t[%d] pipe_fd = [%d][%d]   sock_TCP_fd = %d sock_fd = %d\n", getpid(), pipe_fd[0], pipe_fd[1], sock_TCP_fd, sock_fd);
+		
+        /*************** SSL's TCP Connection **************/
 
 		memset(&remote, 0, sizeof(remote));
 		remote.sin_family = AF_INET;
 		remote.sin_addr.s_addr = inet_addr(remote_ip);
-		remote.sin_port = htons(port);
+		remote.sin_port = htons(PORT);
 		
 		/* Connect to the server using TCP connection */
 		if(connect(sock_TCP_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
@@ -269,6 +279,7 @@ int main(int argc, char *argv[]){
 		do_debug("Client: finish TCP connect()\n");
 		
 		/*************** VPN's UDP Connection **************/
+		sleep(1);
 		
 		// assign the destination address 
 		memset(&remote, 0, sizeof(remote));
@@ -277,11 +288,12 @@ int main(int argc, char *argv[]){
 		remote.sin_port = htons(port);
 
 		// connection request 
-		//char *hello = "hello";
-		//if (sendto(sock_fd, hello, strlen(hello), 0, (struct sockaddr*) &remote, sizeof(remote)) < 0){
-		//	perror("sendto()");
-		//	exit(EXIT_FAILURE);
-		//}
+		char *hello = "hello";
+		if (sendto(sock_fd, hello, strlen(hello), 0, (struct sockaddr*) &remote, sizeof(remote)) < 0){
+			perror("sendto()");
+			exit(EXIT_FAILURE);
+		}
+		do_debug("Client: Finish sendto() - UDP\n");
 		
 		// Connect to the server using UDP connection 
 		if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
@@ -374,6 +386,7 @@ int main(int argc, char *argv[]){
 		do_debug("%s\n", printHex(iv, 16));
 		
 		if(fork() == 0){
+			printf("\t\t[%d]: Close pipe %d\n", getpid(), pipe_fd[READ]);
 			close(pipe_fd[READ]);
 			while(1){
 				printf("Enter Command  (change_key|change_iv|break): ");
@@ -438,29 +451,33 @@ int main(int argc, char *argv[]){
 					// write to pipe
 					printf("write %s [%d] to the pipe\n", pipeBuffer, currentBufferLength); 
 					write(pipe_fd[WRITE], pipeBuffer, currentBufferLength);
-					
 					break;
 				}
 			}
+			exit(EXIT_SUCCESS);
 			return 0;
 		}
+		printf("\t\t[%d]: Close pipe %d\n", getpid(), pipe_fd[WRITE]);
 		close(pipe_fd[WRITE]);
-		processVPN(pipe_fd, pipeBuffer, tap_fd, net_fd, buffer, cliserv);
-		do_debug("Start cleaning\n");
-		//HMAC_CTX_cleanup(&hmac);
-		do_debug("Clean HMAC successfully\n");
-		//EVP_CIPHER_CTX_free(&en);
-		do_debug("Clean en successfully\n");
-		//EVP_CIPHER_CTX_free(&de);
-		do_debug("Clean de successfully\n");
-		//SSL_free (ssl);
-		do_debug("Clean ssl successfully\n");
-		//SSL_CTX_free (ctx);
-		do_debug("Clean ctx successfully\n");
+	
+		goto processVPN;
+		
     /* SERVER: */
     } else {
-		// Server, wait for connections 
-        /* Connect to the client using TCP connection */
+        // Server, wait for connections 
+		
+		/* Create a socket for SSL's TCP control channel */
+		if( (sock_TCP_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0){
+			perror("socker() - SSL's TCP");
+			exit(EXIT_FAILURE);
+		}
+		do_debug("Successfully create a TCP socket\n");
+		
+		
+		do_debug("Successfully create a UDP socket\n");
+		printf("\t\t[%d]: pipe_fd = [%d][%d]   sock_TCP_fd = %d sock_fd = %d\n", getpid(), pipe_fd[0], pipe_fd[1], sock_TCP_fd, sock_fd);
+		
+		optval = 1;
 		if(setsockopt(sock_TCP_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval)) < 0){
 			perror("setsockopt() - TCP");
 			exit(EXIT_FAILURE);
@@ -469,7 +486,8 @@ int main(int argc, char *argv[]){
 		memset(&local, 0, sizeof(local));
 		local.sin_family = AF_INET;
 		local.sin_addr.s_addr = htonl(INADDR_ANY);
-		local.sin_port = htons(port);
+		local.sin_port = htons(PORT);
+		printf("Server: local port 1 = %d\n", port);
 		if(bind(sock_TCP_fd, (struct sockaddr*)&local, sizeof(local)) < 0){
 			perror("Server: bind() - TCP");
 			exit(EXIT_FAILURE);
@@ -481,64 +499,84 @@ int main(int argc, char *argv[]){
 		}
 		do_debug("Server: Finish listen() - TCP\n");
 		
-		memset(&local, 0, sizeof(local));
-		local.sin_family = AF_INET;
-		local.sin_addr.s_addr = htonl(INADDR_ANY);
-		local.sin_port = htons(port);
-		if (bind(sock_fd, (struct sockaddr*) &local, sizeof(local)) < 0){
-			perror("bind() - UDP");
-			exit(EXIT_FAILURE);
-		}
-		do_debug("Server: Finish bind() - UDP\n");
 		
+		
+		
+		
+		
+		
+		int plus = 0;
+		int new_sock_TCP;
 		while(1){
-			/*************** SSL's TCP Connection **************/
-        
-			
+			/* Create a socket for VPN's UDP connection */
 			remotelen = sizeof(remote);
 			memset(&remote, 0, remotelen);
-			int new_sock_TCP;
+			
 			if((new_sock_TCP = accept(sock_TCP_fd, (struct sockaddr*)&remote, &remotelen)) < 0){
 				perror("Server: accept() - TCP");
 				exit(EXIT_FAILURE);
 			}
-			do_debug("Server: Finish accept() - TCP\n");
+			plus++;
 			
-			printf("received from %s\n", inet_ntoa(remote.sin_addr));
 			
-			/*************** END: SSL's TCP Connection **************/
-			// child process
 			if(fork() == 0){
-				close(sock_TCP_fd);
-				sock_TCP_fd = new_sock_TCP; // the child process operate on the created socket
+				sock_TCP_fd = new_sock_TCP;
 				
+				printf("Server: local port 2 = %d\n", port + plus - 1);
 				
-				/*************** VPN's UDP Connection **************/
-				// avoid EADDRINUSE error on bind()  
-				if(setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval)) < 0){
-					perror("setsockopt() - UDP");
+				if(pipe(pipe_fd) < 0){
+					perror("error creating unnamed pipe\n");
 					exit(EXIT_FAILURE);
 				}
 				
-				// wait for connection request 
-				/*remotelen = sizeof(remote);
+				// error checking for fcntl
+				if (fcntl(pipe_fd[0], F_SETFL, O_NONBLOCK) < 0){
+					perror("error making a pipe non-blocking\n");
+					exit(EXIT_FAILURE);
+				}
+				
+				do_debug("Server: Finish bind() - UDP\n");
+				
+				/* Create a socket for VPN's UDP connection */
+				if ( (sock_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+					perror("socket() - VPN's UDP");
+					exit(EXIT_FAILURE);
+				}
+				
+				optval = 1;
+				if(setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval)) < 0){
+					perror("setsockopt() - TCP");
+					exit(EXIT_FAILURE);
+				}
+				memset(&local, 0, sizeof(local));
+				local.sin_family = AF_INET;
+				local.sin_addr.s_addr = htonl(INADDR_ANY);
+				local.sin_port = htons(port);
+				if (bind(sock_fd, (struct sockaddr*) &local, sizeof(local)) < 0){
+					perror("bind() - UDP");
+					exit(EXIT_FAILURE);
+				}
+				
+				remotelen = sizeof(remote);
 				memset(&remote, 0, remotelen);
 				int len;
+				printf("\t\t[%d]: Use %d\n", getpid(), sock_fd);
 				if ((len = recvfrom(sock_fd, buffer, BUFSIZE, 0, (struct sockaddr*)&remote, &remotelen)) < 0){
 					perror("recvfrom() - UDP");
 					exit(EXIT_FAILURE);
 				}
-				do_debug("Server: Finish recvfrom()\n");*/
+				do_debug("Server: Finish recvfrom() - UDP\n");
 				
-				// Connect to the client using UDP connection 
+				
 				if(connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
 					perror("connect() - UDP");
 					exit(EXIT_FAILURE);
 				}
 				net_fd = sock_fd;
-				
 				do_debug("Server: Finish UDP connection\n");
-			
+				
+				
+				
 				/* SSL context initialization */
 				InitializeSSL();
 				do_debug("Server: Finish InitializeSSL()\n");
@@ -626,14 +664,13 @@ int main(int argc, char *argv[]){
 				
 				if(fork() == 0){
 					close(pipe_fd[READ]);
+					printf("\t\t[%d]: Close %d\n", getpid(), pipe_fd[READ]);
+					
 					// Keep reading command sending over SSL 
 					while(1){
 						SSL_read(ssl, commandBuffer, 1);
 						if(!strncmp(commandBuffer, CHANGE_KEY_COMMAND, 1)){
-<<<<<<< HEAD
-=======
 							memset(commandBuffer, 0, sizeof(commandBuffer));
->>>>>>> 993c23bfc178f8aca940540e328c2e7c4cd6afd2
 							memset(argumentBuffer, 0, sizeof(argumentBuffer));
 							SSL_read(ssl, argumentBuffer, 64);
 							
@@ -653,10 +690,7 @@ int main(int argc, char *argv[]){
 							
 							do_debug("The server will set a new key to %s\n", argumentBuffer);
 						}else if(!strncmp(commandBuffer, CHANGE_IV_COMMAND, 1)){
-<<<<<<< HEAD
-=======
 							memset(commandBuffer, 0, sizeof(commandBuffer));
->>>>>>> 993c23bfc178f8aca940540e328c2e7c4cd6afd2
 							memset(argumentBuffer, 0, sizeof(argumentBuffer));
 							SSL_read(ssl, argumentBuffer, 32);
 							
@@ -676,10 +710,7 @@ int main(int argc, char *argv[]){
 							
 							do_debug("The server will set a new iv to %s\n", argumentBuffer);
 						}else if(!strncmp(commandBuffer, BREAK_COMMAND, 1)){
-<<<<<<< HEAD
-=======
 							memset(commandBuffer, 0, sizeof(commandBuffer));
->>>>>>> 993c23bfc178f8aca940540e328c2e7c4cd6afd2
 							do_debug("The server will break the tunnel\n");
 							
 							size_t currentBufferLength = 0;
@@ -689,31 +720,171 @@ int main(int argc, char *argv[]){
 							
 							// write to pipe
 							write(pipe_fd[WRITE], pipeBuffer, currentBufferLength);
+							break;
 						}
 					}
+					exit(EXIT_SUCCESS);
+					return 0;
 				}
 				close(pipe_fd[WRITE]);
-				processVPN(pipe_fd, pipeBuffer, tap_fd, net_fd, buffer, cliserv);
-				
-				do_debug("Start cleaning\n");
-				//HMAC_CTX_cleanup(&hmac);
-				do_debug("Clean HMAC successfully\n");
-				//EVP_CIPHER_CTX_free(&en);
-				do_debug("Clean en successfully\n");
-				//EVP_CIPHER_CTX_free(&de);
-				do_debug("Clean de successfully\n");
-				//SSL_free (ssl);
-				do_debug("Clean ssl successfully\n");
-				//SSL_CTX_free (ctx);
-				do_debug("Clean ctx successfully\n");
-				
-				
+				goto processVPN;
+			}else{
 				close(new_sock_TCP);
-				exit(EXIT_SUCCESS);
 			}
-			close(new_sock_TCP);
 		}
     }
+    
+    processVPN:
+    while(1) {
+        int ret;
+        fd_set rd_set;
+
+        FD_ZERO(&rd_set);
+        FD_SET(tap_fd, &rd_set); 
+        FD_SET(net_fd, &rd_set);
+        FD_SET(pipe_fd[READ], &rd_set);
+        ret = select(FD_SETSIZE, &rd_set, NULL, NULL, NULL);
+
+        if (ret < 0 && errno == EINTR){
+            continue;
+        }
+
+        if (ret < 0) {
+            printf("file descriptor = %d\n", (int)ret);
+            perror("select()");
+            exit(1);
+        }
+        
+        if(FD_ISSET(pipe_fd[READ], &rd_set)){
+			// If the buffer in the pipe is not empty, do accoridgly.
+			printf("read pipe\n");
+			if(read(pipe_fd[READ], pipeBuffer, PIPE_BUF_SIZE) != -1){
+				if(!strncmp(pipeBuffer, CHANGE_KEY_COMMAND, 1)){
+					unsigned char newkey[32];
+					size_t idx; 
+					printf("Set new key to ");
+					for(idx=0;idx<32;idx++){
+						newkey[idx] = pipeBuffer[idx+1]; 
+						printf("%02x", newkey[idx]);
+					}
+					printf("\n");
+					EVP_EncryptInit_ex(&en, NULL, NULL, newkey, NULL);	
+					EVP_DecryptInit_ex(&de, NULL, NULL, newkey, NULL);
+					HMAC_Init_ex(&hmac, newkey, 32, NULL, NULL);
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));
+				}else if(!strncmp(pipeBuffer, CHANGE_IV_COMMAND, 1)){
+					unsigned char newiv[16];
+					size_t idx; 
+					printf("Set new IV to ");
+					for(idx=0;idx<16;idx++){
+						newiv[idx] = pipeBuffer[idx+1]; 
+						printf("%02x", newiv[idx]);
+					}
+					printf("\n");
+					EVP_EncryptInit_ex(&en, NULL, NULL, NULL, newiv);	
+					EVP_DecryptInit_ex(&de, NULL, NULL, NULL, newiv);
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));
+				}else if(!strncmp(pipeBuffer, BREAK_COMMAND, 1)){
+					printf("This tunnel will break as notified by the child\n");
+					memset(pipeBuffer, 0, sizeof(pipeBuffer));
+					break;
+				}
+			}
+		}
+        if(FD_ISSET(tap_fd, &rd_set)){
+            // Read input from the TAP interface     
+			printf("read tap\n");       
+            nread = cread(tap_fd, buffer, BUFSIZE);
+            plength = htons(nread);
+            
+            unsigned char *input, *ciphertext;
+            int len = nread;
+            input = malloc(len);
+            copyBytes(buffer, input, nread);
+
+            // Encrypt the input message
+			int inputLength = len;
+            ciphertext = aes_encrypt(&en, input, &len);
+            do_debug("\tinput = %s [%d]\n", printHex(input, nread), nread);
+            do_debug("\tciphertext = %s[%d]\n",printHex(ciphertext, len), len);
+
+            // Write the header packet and payload of ciphertext
+            plength = htons(len);
+            nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));
+            nwrite = cwrite(net_fd, ciphertext, len);
+            
+            // Write the HMAC for message verificiation
+            int tmp_len = len;
+            len = tmp_len;
+            printf("len = %d\n", inputLength);
+            unsigned char* hmac_result = gen_hmac(&hmac, input, &inputLength);
+            printf("tmp_len = %d\n",len);
+            nwrite = cwrite(net_fd, hmac_result, 32);
+            do_debug("\tHMAC = %s [%d]\n", printHex(hmac_result, 32), 32);
+                        
+            tap2net++;
+            if(cliserv == CLIENT){
+                do_debug("TAP2NET %lu: This is sending from TUN [CLIENT] to tunnel Read [%d] Write [%d]\n", tap2net, nread, nwrite);
+            }else{
+                do_debug("TAP2NET %lu: This is sending from TUN [SERVER] to tunnel Read [%d] Write [%d]\n", tap2net, nread, nwrite);
+            }
+        }
+        if(FD_ISSET(net_fd, &rd_set)){
+            /* data from the network: read it, and write it to the tun/tap interface. 
+            * We need to read the length first, and then the packet */
+            
+			printf("read net\n");
+            // Read the header packet
+            nread = read_n(net_fd, (char *)&plength, sizeof(plength));
+            int len = ntohs(plength);
+			printf("len = %d\n", len);
+            // Read the payload containing encrypted message
+            nread = read_n(net_fd, buffer, len);  
+            do_debug("\tciphertext = %s[%d]\n", printHex(buffer, len), len);
+            
+            // Decrypt the message
+            char *decryptedText = (char *)aes_decrypt(&de, buffer, &len);
+            int lenDecryptedText = len;
+            do_debug("\tdecryptedText = %s[%d]\n", printHex(decryptedText, len), len);
+            
+            // Read the HMAC for message verification
+            read_n(net_fd, buffer, 32);
+            unsigned char *obtained_hmac = buffer;
+            
+            // Calculate the HMAC from the received message
+            unsigned char *generated_hmac;
+            printf("len = %d\n",len);
+            generated_hmac = gen_hmac(&hmac, decryptedText, &len);
+            do_debug("\thmac           = %s\n", printHex(buffer, 32));
+            do_debug("\tgenerated HMAC = %s [%d]\n", printHex(generated_hmac, len), len);
+            
+            // Check two HMACs
+            if(!check_hmac(obtained_hmac, generated_hmac, (unsigned int)32)){
+                perror("HMAC checking failed");
+                exit(EXIT_FAILURE);
+            }
+            
+            // Redirect output to the TAP interface
+            nwrite = cwrite(tap_fd, decryptedText, lenDecryptedText);
+            
+            net2tap++;
+            if(cliserv == CLIENT){
+                do_debug("NET2TAP %lu: Received packets from TUNNEL to [CLIENT] Read [%d] Write [%d]\n", net2tap, nread, nwrite);
+            }else{
+                do_debug("NET2TAP %lu: Received packets from TUNNEL to [SERVER] Read [%d] Write [%d]\n", net2tap, nread, nwrite);
+            }
+        }
+    }
+    printf("Send shutdown\n");
+    if(shutdown(sock_TCP_fd, SHUT_RDWR) < 0){
+		printf("Shutdown failed\n");
+	}
+    close(sock_TCP_fd);
+	printf("\t\t[%d]: Close %d\n", getpid(), sock_TCP_fd);
+    close(net_fd);
+	printf("\t\t[%d]: Close %d\n", getpid(), net_fd);
+    close(pipe_fd[READ]);
+    printf("\t\t[%d]: Close pipe %d\n", getpid(), pipe_fd[READ]);
     return 0;
 }
 
