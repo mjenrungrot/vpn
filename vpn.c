@@ -140,23 +140,20 @@ int main(int argc, char *argv[]){
     int header_len = IP_HDR_LEN;
     int maxfd;
     uint16_t nread, nwrite, plength;
-    char buffer[BUFSIZE];
-	char commandBuffer[BUFSIZE];
-	char argumentBuffer[BUFSIZE];
-	char pipeBuffer[PIPE_BUF_SIZE];
+    char buffer[BUFSIZE];			  // General Purpose buffer
+	char commandBuffer[BUFSIZE];	  // Buffer for command
+	char argumentBuffer[BUFSIZE];	  // Buffer for argument
+	char pipeBuffer[PIPE_BUF_SIZE];	  // Buffer for pipe
     char remote_ip[16] = "";
     unsigned short int port = PORT;
     int sock_fd, net_fd, sock_TCP_fd, optval = 1;
     int cliserv = -1;    /* must be specified on cmd line */
     unsigned long int tap2net = 0, net2tap = 0;
-    SSL* ssl;				// SSL Structure
-    SSL_CTX* ctx;
-    SSL_METHOD* meth;
+    SSL* ssl;						 // SSL Structure
+    SSL_CTX* ctx;					 // SSL Structure
+    SSL_METHOD* meth;				 // SSL Structure
     X509 *server_cert, *client_cert; // Certificates
-    int pipe_fd[2];
-
-	
-	int client_socket[MAX_NUM_CLIENTS];
+    int pipe_fd[2];					 // Unnamed Pipes
 	
 
     progname = argv[0];
