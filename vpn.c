@@ -261,7 +261,7 @@ int main(int argc, char *argv[]){
 		memset(&remote, 0, sizeof(remote));
 		remote.sin_family = AF_INET;
 		remote.sin_addr.s_addr = inet_addr(remote_ip);
-		remote.sin_port = htons(PORT);
+		remote.sin_port = htons(port);
 		if(connect(sock_TCP_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0){
 			perror("connect() - TCP");
 			exit(EXIT_FAILURE);
@@ -468,7 +468,7 @@ int main(int argc, char *argv[]){
 		memset(&local, 0, sizeof(local));
 		local.sin_family = AF_INET;
 		local.sin_addr.s_addr = htonl(INADDR_ANY);
-		local.sin_port = htons(PORT);
+		local.sin_port = htons(port);
 		if(bind(sock_TCP_fd, (struct sockaddr*)&local, sizeof(local)) < 0){
 			perror("Server: bind() - TCP");
 			exit(EXIT_FAILURE);
